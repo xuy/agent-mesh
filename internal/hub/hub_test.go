@@ -1,8 +1,6 @@
 package hub
 
 import (
-	"encoding/json"
-	"io"
 	"net/netip"
 	"strings"
 	"testing"
@@ -31,7 +29,7 @@ func nodeFor(t *testing.T, name string) (ident.Info, netip.Addr, *ident.Identity
 	return info, ident.Addr(id.Client.Public()), id
 }
 
-func discard() *json.Encoder { return json.NewEncoder(io.Discard) }
+func discard() func(Resp) { return func(Resp) {} }
 
 func TestRegisterClaimsAName(t *testing.T) {
 	h := testHub(t)

@@ -19,11 +19,7 @@ func Home() string {
 	if h := os.Getenv("MESH_HOME"); h != "" {
 		return h
 	}
-	d, err := os.UserHomeDir()
-	if err != nil {
-		return ".agent-mesh"
-	}
-	return filepath.Join(d, ".agent-mesh")
+	return defaultHome()
 }
 
 // Layout. Several agents share one machine, so every node gets its own
@@ -51,7 +47,7 @@ func PIDPath(n string) string      { return filepath.Join(NodeDir(n), "daemon.pi
 func SockPath(n string) string {
 	h := fnv.New64a()
 	h.Write([]byte(Home()))
-	return filepath.Join(os.TempDir(), fmt.Sprintf("mesh-%08x-%s.sock", h.Sum64()&0xffffffff, n))
+	return filepath.Join(socketDir(), fmt.Sprintf("mesh-%08x-%s.sock", h.Sum64()&0xffffffff, n))
 }
 
 // Mesh describes the mesh a node belongs to. It is written once per machine by
@@ -62,13 +58,23 @@ type Mesh struct {
 	Hub  string `json:"hub"`            // the hub's tailcat ConnBlob
 	Join string `json:"join"`           // shared secret authorizing registration
 	Note string `json:"note,omitempty"` // free text shown to joining agents
+
+	// Coordinator names the local node that runs the control plane inside its
+	// own daemon. Empty means the mesh uses a standalone `mesh hub`.
+	Coordinator string `json:"coordinator,omitempty"`
 }
 
 const invitePrefix = "am1_"
 
 // Invite encodes the mesh into one pasteable string. It is the only thing a
 // remote agent needs to join, and it is a secret: it carries the join key.
+//
+// Coordinator is stripped: it names a node on *this* machine, and carrying it
+// across would make a node on the far machine that happens to share the name
+// believe it coordinates the mesh -- and publish its own address as the one
+// everyone should join.
 func (m Mesh) Invite() string {
+	m.Coordinator = ""
 	b, _ := json.Marshal(m)
 	return invitePrefix + base64.RawURLEncoding.EncodeToString(b)
 }
@@ -88,8 +94,9 @@ func ParseInvite(s string) (Mesh, error) {
 		return m, fmt.Errorf("corrupt invite: %w", err)
 	}
 	if m.Hub == "" || m.Join == "" {
-		return m, fmt.Errorf("invite is missing the hub address or join key")
+		return m, fmt.Errorf("invite is missing the mesh address or join key")
 	}
+	m.Coordinator = "" // never inherit another machine's coordinator
 	return m, nil
 }
 
@@ -121,10 +128,26 @@ type Node struct {
 	Kinds []string `json:"kinds,omitempty"`
 	Note  string   `json:"note,omitempty"`
 
-	// Adapter decides how an inbound ask is answered: "mailbox" parks it for
-	// the local agent to answer by hand, "exec" runs Exec and streams stdout.
+	// Adapter is this node's delivery mode -- how a question reaches whoever
+	// answers it:
+	//
+	//   mailbox  park it for `mesh reply` (the default; works for anything)
+	//   exec     run Exec and stream its stdout back (a fresh agent session)
+	//   webhook  POST to a resident agent's local API (a live session)
+	//   notify   park it, but run Exec first so someone notices
 	Adapter string `json:"adapter,omitempty"`
 	Exec    string `json:"exec,omitempty"`
+
+	WebhookURL    string `json:"webhook_url,omitempty"`
+	WebhookHeader string `json:"webhook_header,omitempty"`
+	WebhookAsync  bool   `json:"webhook_async,omitempty"`
+
+	// Region pins the DERP relay this node bootstraps through, chosen by the
+	// first start's latency check. A node's address encodes its relay, so
+	// without pinning the address would change on every restart -- which would
+	// invalidate every invite handed out by a coordinator, and stale every
+	// peer's cached roster entry.
+	Region int `json:"region,omitempty"`
 }
 
 // LoadNode reads a node's settings.

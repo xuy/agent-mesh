@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/xuy/agent-mesh/internal/adapter"
-	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/ident"
 	"github.com/xuy/agent-mesh/internal/wire"
 )
@@ -166,7 +165,7 @@ type Ctl struct{ name string }
 
 // Dial checks that a daemon for name is listening.
 func Dial(name string) (*Ctl, error) {
-	c, err := net.DialTimeout("unix", config.SockPath(name), 2*time.Second)
+	c, err := dialControl(name, 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("no mesh daemon is running for %q -- start one with `mesh up --name %s`", name, name)
 	}
@@ -178,7 +177,7 @@ func Dial(name string) (*Ctl, error) {
 // progress to onChunk.
 func (x *Ctl) Do(req CtlReq, onChunk func(string)) (CtlResp, error) {
 	var last CtlResp
-	c, err := net.DialTimeout("unix", config.SockPath(x.name), 5*time.Second)
+	c, err := dialControl(x.name, 5*time.Second)
 	if err != nil {
 		return last, fmt.Errorf("no mesh daemon is running for %q -- start one with `mesh up --name %s`", x.name, x.name)
 	}

@@ -135,6 +135,12 @@ type Info struct {
 	Kinds []string `json:"kinds,omitempty"`
 	Note  string   `json:"note,omitempty"`
 
+	// Started is when this node's daemon came up. It is what tells a peer the
+	// node restarted: addresses are deliberately stable across restarts, so a
+	// cached tunnel would otherwise look valid while pointing at a dead
+	// WireGuard session.
+	Started time.Time `json:"started,omitzero"`
+
 	Seen   time.Time `json:"seen,omitzero"`
 	Online bool      `json:"online,omitempty"`
 }

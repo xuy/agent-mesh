@@ -116,9 +116,13 @@ does not:
 - **Peer removal needs a daemon restart.** tailcat can grant a peer key at
   runtime but not revoke one, so a peer dropped from the mesh stays reachable
   until the node restarts.
-- **The hub is a single point of discovery**, though never of traffic. While it
-  is down, existing peers keep talking off their cached rosters; only joining
-  and address changes stall.
+- **The coordinator accepts tunnels from nodes it does not know**, because that
+  is what joining is. It still refuses to *talk* to anyone outside the roster,
+  and registering needs the mesh's join key -- but unlike a plain node, an
+  unknown peer reaches our code before being turned away.
+- **Discovery has a single point**, though traffic never does. While the
+  coordinator is down, existing peers keep talking off their cached rosters;
+  only joining and address changes stall.
 - **tailcat has no API stability promise.** Pinned at v0.4.0.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and why it is shaped this

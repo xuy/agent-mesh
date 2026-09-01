@@ -283,3 +283,91 @@ product rather than documentation around it.
 - **`mesh doctor` ends every finding with the command that fixes it**, and so
   does every error the CLI can return.
 - Every command takes `--json`.
+
+## 14. Round two: cross-platform, hubless, and reaching a live agent
+
+The prototype proved the wire. This round made it something other people could
+use: it runs on Windows, it needs no server, and a message can reach an agent
+that is already running rather than starting a fresh one.
+
+### The coordinator moved inside a node
+
+`mesh hub` as a separate process was an adoption tax and it undercut the "no
+server" claim. The control plane now runs inside the first node's daemon, on
+`wire.HubPort` of the tunnel that node already has. The first agent to join
+founds the mesh and coordinates it; joining a second machine is one invite and
+one command, with no third process anywhere.
+
+Standalone `mesh hub` still exists for a dedicated coordinator, and the hub
+package no longer owns a server: `Hub.Handle` serves a connection, and
+`Hub.RegisterLocal` registers the node that hosts it without one, so the
+coordinator is not a special case in its own roster.
+
+### Addresses are now pinned, which broke the tunnel cache
+
+A ConnBlob encodes the node's key *and* its DERP region, and the region was
+chosen by a latency check at every start. That was survivable when only the hub
+published an address; once a node's own address became the mesh's bootstrap
+address, a restart would silently invalidate every invite. So each node now
+pins the region its first start chose.
+
+That fixed invites and broke something else. Addresses had been an accidental
+restart signal: when a peer came back with a new blob, the cached tunnel to it
+was obviously stale and got rebuilt. With stable addresses the cache looked
+valid while pointing at a dead WireGuard session, and dials hung until their
+deadline. Roster entries now carry `Started`, the peer's daemon start time, and
+a cached client is rebuilt when either the address or that changes. A dial that
+fails also drops its cached client, because a failure is evidence the path is
+dead whatever the roster still says.
+
+### The coordinator cannot allowlist
+
+tailcat's `AllowedClients` is per-tunnel, not per-port, and it is
+allow-everything until the first key is added. A coordinator that allowlisted
+its peers would therefore drop the tunnel of every node that had not joined
+yet -- which is every node that is trying to join. The mesh became unjoinable
+the moment it had one member, and it only worked at all in early testing
+because of the order things happened to start in.
+
+Coordinators no longer allowlist. Identity is still enforced above: an inbound
+connection from a caller who is not in the roster is refused before its message
+is read, and registering requires the mesh's join key. Plain nodes still
+allowlist, so this weakens exactly one node in the mesh, and the fix if that
+ever matters is a second tunnel for the control plane rather than a change of
+model.
+
+### Delivery modes
+
+An adapter used to answer a question. A *delivery mode* now decides how the
+question reaches whoever answers, which is the distinction that matters once
+the answering agent is already running:
+
+- `mailbox` parks it for `mesh reply` -- works for anything, including a human.
+- `exec` runs a command in a fresh agent session.
+- `webhook` POSTs to a resident agent's local API, reaching a live session with
+  its context. The endpoint may answer in the response body or acknowledge and
+  answer later through `mesh reply`; the adapter accepts both, because a
+  resident assistant normally does the second.
+- `notify` parks the question but runs a command first, so an idle agent or a
+  human finds out it is there.
+
+The posted payload carries its own `reply_with` instruction and a note marking
+the content as peer input rather than a user instruction. That is deliberate:
+it means an agent with no integration written for it can still take part, which
+is the whole O(N) claim, and it puts the trust boundary in the message itself
+rather than only in documentation.
+
+### Windows
+
+`Setsid` is Unix-only; Windows detaches with `DETACHED_PROCESS |
+CREATE_NEW_PROCESS_GROUP`. State lives under `%LOCALAPPDATA%`. The exec adapter
+runs `powershell -NoProfile -NonInteractive -Command` rather than `sh -c`, so an
+adapter command refers to the question as `$env:MESH_BODY`. `SIGTERM` cannot be
+sent to a detached process, so `mesh down` goes through the control socket,
+which works everywhere.
+
+The control socket stays a unix socket on every platform: Windows has supported
+AF_UNIX since Windows 10 1803 and Go speaks it there, which keeps filesystem
+permissions as the gate instead of opening a loopback port any local process
+could reach. If that ever disappoints on a real Windows box, the fallback is a
+named pipe with an explicit ACL -- not a TCP port.

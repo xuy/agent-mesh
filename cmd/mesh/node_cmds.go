@@ -42,6 +42,17 @@ func detectAgent() string {
 	}
 }
 
+// defaultMeshName names a brand-new mesh after the machine that started it,
+// which is almost always what a single person wants and is easy to change.
+func defaultMeshName() string {
+	h, _ := os.Hostname()
+	h = strings.TrimSuffix(strings.ToLower(h), ".local")
+	if h == "" {
+		return "mesh"
+	}
+	return h
+}
+
 func defaultName(agent string) string {
 	if agent != "agent" {
 		return agent
@@ -57,9 +68,14 @@ func defaultName(agent string) string {
 func cmdJoin(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ExitOnError)
 	name := fs.String("name", "", "this node's name on the mesh (must be unique)")
-	invite := fs.String("invite", "", "invite string from `mesh invite` on the machine running the hub")
+	invite := fs.String("invite", "", "invite string from `mesh invite` on a machine already in the mesh")
+	meshName := fs.String("mesh", "", "name for a new mesh, if this is the first node")
 	agent := fs.String("agent", "", "what software is behind this node (default: detected)")
 	execCmd := fs.String("exec", "", "answer questions by running this shell command instead of parking them for a human")
+	webhook := fs.String("webhook", "", "deliver questions to a resident agent's local API, e.g. http://127.0.0.1:8080/api/sessions/main/messages")
+	webhookHdr := fs.String("webhook-header", "", "header the local API needs, e.g. \"Authorization: Bearer <token>\"")
+	webhookAsync := fs.Bool("webhook-async", false, "the local API only acknowledges; the answer comes back later via `mesh reply`")
+	notify := fs.String("notify", "", "park questions for `mesh reply`, but run this command first so someone notices")
 	note := fs.String("note", "", "one line telling other agents what you are for")
 	wait := fs.Duration("wait", 90*time.Second, "how long to wait for the tunnel to come up")
 	fs.Parse(args)
@@ -74,11 +90,17 @@ func cmdJoin(args []string) error {
 		}
 		fmt.Printf("joined mesh %q\n", m.Name)
 	}
+	// No mesh here and no invite means this is the first agent: create the
+	// mesh and let this node coordinate it, so nobody has to run a server.
 	m, err := config.LoadMesh()
+	founding := false
 	if err != nil {
-		return fmt.Errorf("this machine does not know about any mesh yet.\n" +
-			"  If a hub is already running elsewhere: mesh join --invite <string from `mesh invite`>\n" +
-			"  To start one here:                     mesh hub --mesh <name>")
+		nm := *meshName
+		if nm == "" {
+			nm = defaultMeshName()
+		}
+		m = config.Mesh{Name: nm, Join: config.NewJoinKey(), Note: *note}
+		founding = true
 	}
 
 	ag := *agent
@@ -101,10 +123,23 @@ func cmdJoin(args []string) error {
 	if *note != "" {
 		cfg.Note = *note
 	}
-	if *execCmd != "" {
+	switch {
+	case *webhook != "":
+		cfg.Adapter, cfg.WebhookURL = "webhook", *webhook
+		cfg.WebhookHeader, cfg.WebhookAsync = *webhookHdr, *webhookAsync
+	case *notify != "":
+		cfg.Adapter, cfg.Exec = "notify", *notify
+	case *execCmd != "":
 		cfg.Adapter, cfg.Exec = "exec", *execCmd
-	} else if cfg.Adapter == "" {
+	case cfg.Adapter == "":
 		cfg.Adapter = "mailbox"
+	}
+	if founding {
+		m.Coordinator = nm
+		if err := m.Save(); err != nil {
+			return err
+		}
+		fmt.Printf("created mesh %q with %s as its coordinator\n", m.Name, nm)
 	}
 	if err := ensureIdentity(nm); err != nil {
 		return err
@@ -162,10 +197,21 @@ func joinSummary(nm, mesh string) error {
 			}
 		}
 	}
-	if st.Adapter == "mailbox" {
+	if m, err := config.LoadMesh(); err == nil && m.Coordinator == st.Name && m.Hub != "" {
+		fmt.Println("\nThis node coordinates the mesh. To add an agent on another machine,")
+		fmt.Println("give it this invite (a secret -- it carries the join key):")
+		fmt.Printf("    mesh join --invite %s\n", m.Invite())
+	}
+	switch st.Adapter {
+	case "mailbox":
 		fmt.Println("\nYou answer by hand: `mesh waiting` shows questions, `mesh reply <id> <answer>` answers one.")
-	} else {
+	case "exec":
 		fmt.Println("\nYou answer automatically by running your configured command.")
+	case "webhook":
+		fmt.Println("\nQuestions are delivered to your resident agent's local API.")
+		fmt.Println("If it only acknowledges them, answer with `mesh reply <id> <answer>`.")
+	case "notify":
+		fmt.Println("\nQuestions park for you and run your notify command; answer with `mesh reply <id> <answer>`.")
 	}
 	fmt.Println("Run `mesh guide` for everything else.")
 	return nil
@@ -218,7 +264,7 @@ func detach(logPath string, args ...string) (int, error) {
 
 	cmd := exec.Command(self, args...)
 	cmd.Stdout, cmd.Stderr = lf, lf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = detachAttrs()
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
@@ -288,16 +334,11 @@ func cmdUp(args []string) error {
 	}
 	defer n.Close()
 
-	sock := config.SockPath(nm)
-	os.Remove(sock)
-	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
-		return err
-	}
-	ln, err := listenUnix(sock)
+	ln, err := node.ListenControl(nm)
 	if err != nil {
 		return err
 	}
-	defer func() { ln.Close(); os.Remove(sock) }()
+	defer func() { ln.Close(); node.RemoveControl(nm) }()
 
 	logf("%s is up on mesh %q", nm, m.Name)
 	go n.ServeCtl(ln)

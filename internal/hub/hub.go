@@ -60,16 +60,19 @@ type Hub struct {
 	srv      *tailcat.Server
 }
 
+// session is one registered node. Its send func hides how the roster reaches
+// that node: over a tunnel for a remote one, by direct call for the node that
+// is itself running this hub.
 type session struct {
 	info ident.Info
-	enc  *json.Encoder
-	mu   sync.Mutex // serializes pushes to this connection
+	send func(Resp)
+	mu   sync.Mutex // serializes pushes, so two rosters never interleave
 }
 
 func (s *session) push(r Resp) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.enc.Encode(r)
+	s.send(r)
 }
 
 // New returns a hub for the given mesh.
@@ -200,6 +203,39 @@ func (h *Hub) saveClaimsLocked() {
 	}
 }
 
+// Handle serves one inbound control connection. A node that is also the
+// coordinator wires this into its own tailcat server, so the mesh needs no
+// separate process.
+func (h *Hub) Handle(c net.Conn) { h.serve(c) }
+
+// LoadClaims reads the persisted name claims. Start does this itself; a hub
+// embedded in a node calls it directly.
+func (h *Hub) LoadClaims() { h.loadClaims() }
+
+// RegisterLocal registers the node that is running this hub, without a
+// connection. onRoster receives the roster now and on every later change.
+// The returned func unregisters.
+func (h *Hub) RegisterLocal(info ident.Info, onRoster func([]ident.Info)) (func(), error) {
+	sess, err := h.register(info, netip.Addr{}, func(r Resp) {
+		if r.Roster != nil {
+			onRoster(r.Roster)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	onRoster(h.roster())
+	h.broadcast()
+	return func() {
+		h.mu.Lock()
+		if h.sessions[info.Name] == sess {
+			delete(h.sessions, info.Name)
+		}
+		h.mu.Unlock()
+		h.broadcast()
+	}, nil
+}
+
 // serve handles one node's long-lived control connection. Registration,
 // liveness and roster delivery all ride on it, so presence is simply whether
 // the connection is open.
@@ -265,7 +301,7 @@ func (h *Hub) serve(c net.Conn) {
 			h.mu.Unlock()
 			reply(Resp{V: wire.Version, OK: true})
 		case "register":
-			sess, err := h.register(req.Node, remote, enc)
+			sess, err := h.register(req.Node, remote, func(r Resp) { enc.Encode(r) })
 			if err != nil {
 				reply(Resp{V: wire.Version, Error: err.Error()})
 				return
@@ -283,7 +319,7 @@ func (h *Hub) serve(c net.Conn) {
 // register admits a node, enforcing the two rules that make a name mean
 // something: the caller must actually hold the client key it claims, and a
 // name, once claimed, belongs to one server key forever.
-func (h *Hub) register(info ident.Info, remote netip.Addr, enc *json.Encoder) (*session, error) {
+func (h *Hub) register(info ident.Info, remote netip.Addr, send func(Resp)) (*session, error) {
 	if info.Name == "" {
 		return nil, fmt.Errorf("a node must register a name")
 	}
@@ -318,7 +354,7 @@ func (h *Hub) register(info ident.Info, remote netip.Addr, enc *json.Encoder) (*
 	info.Mesh = h.mesh.Name
 	info.Seen = time.Now().UTC()
 	info.Online = true
-	sess := &session{info: info, enc: enc}
+	sess := &session{info: info, send: send}
 	h.sessions[info.Name] = sess
 	h.logf("hub: %s joined (%s)", info.Name, info.Agent)
 	return sess, nil

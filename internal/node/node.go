@@ -22,6 +22,7 @@ import (
 	"github.com/xuy/agent-mesh/internal/hub"
 	"github.com/xuy/agent-mesh/internal/ident"
 	"github.com/xuy/agent-mesh/internal/wire"
+	"tailscale.com/tailcfg"
 )
 
 // Node is a running agent on the mesh.
@@ -34,6 +35,11 @@ type Node struct {
 	srv     *tailcat.Server
 	ad      adapter.Adapter
 	mailbox *adapter.Mailbox // set when the adapter is a mailbox
+
+	// coord is set when this node also runs the mesh's control plane inside
+	// its own daemon, which is the default for the first node in a mesh.
+	coord        *hub.Hub
+	releaseLocal func()
 
 	mu      sync.Mutex
 	roster  map[string]ident.Info  // by name, excluding self
@@ -48,8 +54,9 @@ type Node struct {
 }
 
 type peerClient struct {
-	blob string
-	cl   *tailcat.Client
+	blob    string
+	started time.Time
+	cl      *tailcat.Client
 }
 
 // New builds a node from its settings and identity.
@@ -62,11 +69,25 @@ func New(cfg config.Node, m config.Mesh, id *ident.Identity, logf func(string, .
 		roster: map[string]ident.Info{}, byAddr: map[netip.Addr]string{},
 		clients: map[string]*peerClient{}, closed: make(chan struct{}),
 	}
-	if cfg.Adapter == "exec" && cfg.Exec != "" {
+	switch {
+	case cfg.Adapter == "exec" && cfg.Exec != "":
 		n.ad = &adapter.Exec{Cmd: cfg.Exec}
-	} else {
+	case cfg.Adapter == "webhook" && cfg.WebhookURL != "":
+		n.ad = &adapter.Webhook{
+			URL: cfg.WebhookURL, Header: cfg.WebhookHeader,
+			Async: cfg.WebhookAsync, Box: adapter.NewMailbox(),
+		}
+	case cfg.Adapter == "notify":
+		n.ad = &adapter.Notify{Cmd: cfg.Exec, Box: adapter.NewMailbox()}
+	default:
 		n.mailbox = adapter.NewMailbox()
 		n.ad = n.mailbox
+	}
+	// Several modes deliver the question somewhere and still expect a human or
+	// an agent to answer with `mesh reply`, so find the parking area wherever
+	// it lives rather than special-casing each one.
+	if p, ok := n.ad.(interface{ Mailbox() *adapter.Mailbox }); ok && n.mailbox == nil {
+		n.mailbox = p.Mailbox()
 	}
 	return n
 }
@@ -80,22 +101,71 @@ func (n *Node) Mailbox() *adapter.Mailbox { return n.mailbox }
 // Start brings up the node's tunnel and begins serving peers.
 func (n *Node) Start() error {
 	n.started = time.Now()
+	if n.mesh.Coordinator == n.cfg.Name && n.cfg.Name != "" {
+		n.coord = hub.New(n.mesh, n.logf)
+		n.coord.LoadClaims()
+	}
 	n.srv = &tailcat.Server{
-		Key:  n.id.Server,
-		Logf: func(string, ...any) {},
+		Key:      n.id.Server,
+		RegionID: tailcfg.DERPRegionID(n.cfg.Region),
+		Logf:     func(string, ...any) {},
 		OnTCP: func(port uint16) func(net.Conn) {
-			if port != wire.Port {
-				return nil
+			switch port {
+			case wire.Port:
+				return n.serveTunnel
+			case wire.HubPort:
+				if n.coord != nil {
+					return n.coord.Handle
+				}
 			}
-			return n.serveTunnel
+			return nil
 		},
 	}
 	if err := n.srv.Start(); err != nil {
 		return fmt.Errorf("starting tunnel: %w", err)
 	}
+	n.pinRegion()
 	n.loadRoster()
+
+	if n.coord != nil {
+		// The coordinator's own address is the mesh's bootstrap address, so
+		// publish it before anyone tries to join.
+		blob := string(n.srv.ConnBlob())
+		if n.mesh.Hub != blob {
+			n.mesh.Hub = blob
+			if err := n.mesh.Save(); err != nil {
+				return fmt.Errorf("publishing the mesh address: %w", err)
+			}
+		}
+		release, err := n.coord.RegisterLocal(n.Info(), n.applyRoster)
+		if err != nil {
+			return fmt.Errorf("registering with our own control plane: %w", err)
+		}
+		n.releaseLocal = release
+		n.mu.Lock()
+		n.hubUp = true
+		n.mu.Unlock()
+		n.logf("%s is the coordinator for mesh %q", n.cfg.Name, n.mesh.Name)
+		return nil
+	}
 	go n.registrar()
 	return nil
+}
+
+// pinRegion records the relay the first start chose, so this node's address
+// stays the same across restarts.
+func (n *Node) pinRegion() {
+	if n.cfg.Region != 0 {
+		return
+	}
+	ci, err := tailcat.ParseConnBlob(n.srv.ConnBlob())
+	if err != nil || ci.RegionID == 0 {
+		return
+	}
+	n.cfg.Region = int(ci.RegionID)
+	if err := n.cfg.Save(); err != nil {
+		n.logf("pinning relay region: %v", err)
+	}
 }
 
 // Close shuts the node down.
@@ -104,6 +174,9 @@ func (n *Node) Close() error {
 	case <-n.closed:
 	default:
 		close(n.closed)
+	}
+	if n.releaseLocal != nil {
+		n.releaseLocal()
 	}
 	n.mu.Lock()
 	for _, pc := range n.clients {
@@ -148,6 +221,7 @@ func (n *Node) Info() ident.Info {
 		Agent:     n.cfg.Agent,
 		Kinds:     append(append([]string{}, kinds...), n.ad.Kind()),
 		Note:      n.cfg.Note,
+		Started:   n.started.UTC(),
 		Seen:      time.Now().UTC(),
 		Online:    true,
 	}
@@ -244,11 +318,12 @@ func (n *Node) client(name string) (*tailcat.Client, ident.Info, error) {
 	if !ok {
 		return nil, info, fmt.Errorf("no peer named %q on mesh %s (run `mesh peers` to see who is here)", name, n.mesh.Name)
 	}
-	if pc != nil && pc.blob == info.Blob {
+	if pc != nil && pc.blob == info.Blob && pc.started.Equal(info.Started) {
 		return pc.cl, info, nil
 	}
 	if pc != nil {
-		pc.cl.Close() // the peer restarted and has a new address
+		// Either the peer moved, or it restarted behind the same address.
+		pc.cl.Close()
 	}
 	cl := &tailcat.Client{
 		Server: tailcat.ConnBlob(info.Blob),
@@ -256,9 +331,22 @@ func (n *Node) client(name string) (*tailcat.Client, ident.Info, error) {
 		Logf:   func(string, ...any) {},
 	}
 	n.mu.Lock()
-	n.clients[name] = &peerClient{blob: info.Blob, cl: cl}
+	n.clients[name] = &peerClient{blob: info.Blob, started: info.Started, cl: cl}
 	n.mu.Unlock()
 	return cl, info, nil
+}
+
+// dropClient discards a cached tunnel so the next attempt builds a fresh one.
+// A dial that failed has told us the cached path is dead, whatever the roster
+// still says.
+func (n *Node) dropClient(name string) {
+	n.mu.Lock()
+	pc := n.clients[name]
+	delete(n.clients, name)
+	n.mu.Unlock()
+	if pc != nil {
+		pc.cl.Close()
+	}
 }
 
 // Ask sends a question and waits for the answer, streaming progress to onChunk.
@@ -269,6 +357,7 @@ func (n *Node) Ask(ctx context.Context, to, body, thread string, onChunk func(st
 	}
 	c, err := cl.DialTCPPort(ctx, wire.Port)
 	if err != nil {
+		n.dropClient(to)
 		return "", fmt.Errorf("cannot reach %s (it may have restarted; check `mesh peers`): %w", to, err)
 	}
 	defer c.Close()
@@ -319,6 +408,7 @@ func (n *Node) Tell(ctx context.Context, to, body, thread string) error {
 	}
 	c, err := cl.DialTCPPort(ctx, wire.Port)
 	if err != nil {
+		n.dropClient(to)
 		return fmt.Errorf("cannot reach %s: %w", to, err)
 	}
 	defer c.Close()
@@ -358,6 +448,7 @@ func (n *Node) Ping(ctx context.Context, to string) (PingResult, error) {
 	start := time.Now()
 	pr, err := cl.DiscoPing(ctx)
 	if err != nil {
+		n.dropClient(to)
 		return res, fmt.Errorf("cannot reach %s: %w", to, err)
 	}
 	res.Latency = time.Since(start)
@@ -379,6 +470,16 @@ func (n *Node) peerAt(a netip.Addr) (string, bool) {
 	name, ok := n.byAddr[a]
 	return name, ok
 }
+
+// allowlisting reports whether this node restricts tunnels to known peers.
+//
+// A coordinator must not: accepting a tunnel from a node it has never seen is
+// exactly what joining is, and tailcat's allowlist is per-tunnel rather than
+// per-port, so switching it on would make the mesh unjoinable the moment the
+// coordinator learned its first peer. Identity is still enforced a layer up --
+// serveTunnel drops a caller that is not in the roster, and registering
+// requires the mesh's join key.
+func (n *Node) allowlisting() bool { return n.coord == nil }
 
 // applyRoster replaces what this node knows about the mesh and widens the
 // tunnel allowlist to match.
@@ -406,9 +507,11 @@ func (n *Node) applyRoster(rs []ident.Info) {
 	}
 	n.mu.Unlock()
 
-	for _, i := range names {
-		if k, err := ident.ParsePub(i.ClientPub); err == nil {
-			n.srv.AddAllowedClient(k)
+	if n.allowlisting() {
+		for _, i := range names {
+			if k, err := ident.ParsePub(i.ClientPub); err == nil {
+				n.srv.AddAllowedClient(k)
+			}
 		}
 	}
 	n.saveRoster(names)

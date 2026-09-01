@@ -31,7 +31,7 @@ func cmdHub(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := p.Signal(syscall.SIGTERM); err != nil {
+		if err := stopProcess(p); err != nil {
 			return err
 		}
 		fmt.Printf("stopped the hub for mesh %q\n", st.Mesh)

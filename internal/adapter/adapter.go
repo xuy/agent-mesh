@@ -113,7 +113,8 @@ type Exec struct {
 	Cmd string
 	// Dir is the working directory, if any.
 	Dir string
-	// Shell overrides the interpreter. Defaults to sh.
+	// Shell overrides the interpreter. Defaults to sh on Unix and PowerShell
+	// on Windows; see ShellHint.
 	Shell string
 
 	mu      sync.Mutex
@@ -139,11 +140,8 @@ func (e *Exec) Handle(ctx context.Context, r Request, emit Emit) (string, error)
 		e.mu.Unlock()
 	}
 
-	sh := e.Shell
-	if sh == "" {
-		sh = "sh"
-	}
-	cmd := exec.CommandContext(ctx, sh, "-c", e.Cmd)
+	argv := shellArgv(e.Shell, e.Cmd)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = e.Dir
 	cmd.Env = append(envOf(), []string{
 		"MESH_BODY=" + r.Body,
