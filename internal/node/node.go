@@ -218,6 +218,23 @@ func (n *Node) Start() error {
 	return nil
 }
 
+// waitUntilServing blocks until the tunnel has a relay home, meaning inbound
+// connections can actually arrive. It reports the reason if it gives up; a node
+// that is slow to home is still worth starting, it just cannot promise it is
+// reachable.
+func (n *Node) waitUntilServing(limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		if st := n.srv.Status(); st != nil && st.Self != nil && st.Self.Relay != "" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("no relay home after %s", limit)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // pinRegion chooses this node's relay once and remembers it, so the node's
 // address is the same every time it starts.
 //
@@ -422,6 +439,34 @@ func (n *Node) client(name string) (*tailcat.Client, ident.Info, error) {
 	return cl, info, nil
 }
 
+// dial opens a connection to a peer, retrying once with a fresh client.
+//
+// Bringing up a tunnel for the first time has its own ten-second ceiling inside
+// tailcat, independent of our deadline, so a peer that started moments ago --
+// or restarted while we held a cached client -- fails on the first attempt and
+// succeeds on the second. Retrying here is cheaper than making every caller
+// understand that.
+func (n *Node) dial(ctx context.Context, to string, cl *tailcat.Client) (net.Conn, error) {
+	c, err := cl.DialTCPPort(ctx, wire.Port)
+	if err == nil {
+		return c, nil
+	}
+	n.dropClient(to)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("cannot reach %s before the deadline: %w", to, err)
+	}
+	fresh, _, ferr := n.client(to)
+	if ferr != nil {
+		return nil, ferr
+	}
+	c, err = fresh.DialTCPPort(ctx, wire.Port)
+	if err != nil {
+		n.dropClient(to)
+		return nil, fmt.Errorf("cannot reach %s (it may be offline or still starting; `mesh peers` shows who is up): %w", to, err)
+	}
+	return c, nil
+}
+
 // dropClient discards a cached tunnel so the next attempt builds a fresh one.
 // A dial that failed has told us the cached path is dead, whatever the roster
 // still says.
@@ -441,10 +486,9 @@ func (n *Node) Ask(ctx context.Context, to, body, thread string, onChunk func(st
 	if err != nil {
 		return "", err
 	}
-	c, err := cl.DialTCPPort(ctx, wire.Port)
+	c, err := n.dial(ctx, to, cl)
 	if err != nil {
-		n.dropClient(to)
-		return "", fmt.Errorf("cannot reach %s (it may have restarted; check `mesh peers`): %w", to, err)
+		return "", err
 	}
 	defer c.Close()
 	wc := wire.NewConn(c)
@@ -492,10 +536,9 @@ func (n *Node) Tell(ctx context.Context, to, body, thread string) error {
 	if err != nil {
 		return err
 	}
-	c, err := cl.DialTCPPort(ctx, wire.Port)
+	c, err := n.dial(ctx, to, cl)
 	if err != nil {
-		n.dropClient(to)
-		return fmt.Errorf("cannot reach %s: %w", to, err)
+		return err
 	}
 	defer c.Close()
 	wc := wire.NewConn(c)

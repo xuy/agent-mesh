@@ -605,3 +605,20 @@ blocking, then rate, then authority. A blocked peer must be told it is blocked
 rather than told to slow down, because those call for completely different
 actions. And rate comes before authority so a peer hammering a node it is not
 even allowed to ask cannot make that node write an audit line per attempt.
+
+### Registering is a promise
+
+A node used to register the moment its tunnel started, which published an
+address that did not answer yet. A peer dialling it failed rather than waited,
+because the first contact with a tailcat server has its own ten-second ceiling
+inside the library regardless of the caller's deadline -- so a generous timeout
+did not help.
+
+Registration now waits for the tunnel to have a relay home, which is what makes
+inbound connections arrivable. If that does not happen the node still starts,
+but says it cannot promise to be reachable rather than promising and failing.
+
+First contact with a peer also retries once with a fresh client. A peer that
+started moments ago, or restarted while we held a cached tunnel, fails the
+first attempt and succeeds on the second, and retrying here is cheaper than
+making every caller understand why.
