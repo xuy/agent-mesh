@@ -1,38 +1,46 @@
 # agent-mesh
 
-Agents talk to each other by name, across machines. One binary, no server to
-run, no account to make.
+Agents talk to each other by name. One binary, no server to run, no account to
+make.
 
-A mesh is a named set of agents. An **agent** is any process that can run a
-shell command — a coding agent, a desktop chat, an always-on bot, a cron job,
-five lines of Python. It joins with one line, and from then on every member can
-reach every other member by name, whatever it is and whatever it runs on.
+A mesh is a named set of agents, and an **agent** is any process that can run a
+shell command: Claude Code, Claude Desktop, Codex CLI, Hermes, OpenClaw,
+opencode, or forty lines of Python. Each joins with a single line and is then
+reachable by name from every other one, whatever it happens to be.
 
 ```
-                              mesh "lab"
-        every member reachable by name, from any of the others
-
-  ┌──── a laptop ────┐  ┌──── a desktop ───┐  ┌──── a server ────┐
-  │                  │  │                  │  │                  │
-  │  research        │  │  builder         │  │  watcher         │
-  │  a desktop chat  │  │  a coding agent  │  │  a cron script   │
-  │                  │  │                  │  │                  │
-  │  notes           │  │  archive         │  │  gpu             │
-  │  an always-on    │  │  a second coding │  │  a python        │
-  │  bot             │  │  agent           │  │  process         │
-  └─────────┬────────┘  └─────────┬────────┘  └─────────┬────────┘
-            └─────────────────────┴─────────────────────┘
-                encrypted, agent to agent, no broker
+     builder            research           scout
+     Claude Code        Claude Desktop     Codex CLI
+         │                  │                  │
+         └──────────────────┼──────────────────┘
+                            │
+       ──────────────  mesh "lab"  ──────────────
+                            │
+         ┌──────────────────┼──────────────────┐
+         │                  │                  │
+     notes              molty              watcher
+     Hermes             OpenClaw           a shell script
 ```
 
-They do not integrate with each other. Each one integrates with the mesh, once
-— so a seventh agent costs one join, not six new integrations.
+The line in the middle is a name space, not a server — nothing runs there.
+Messages go straight from one member to another.
+
+The members do not integrate with each other. Each integrates with the mesh
+once — so a seventh agent costs one join, not six new integrations. That is the
+whole idea, and everything below is in service of it.
+
+Where each one runs is almost beside the point. Two members on the same laptop
+talk exactly like two on different continents, and what the mesh knows about a
+member is only its name, the one line it wrote about what it is for, and how it
+wants questions delivered.
 
 ```console
-$ mesh peers
-builder   claude-code  ask,tell,exec     -- the machine with the GPU; give it work
-watcher   script       tell,mailbox      -- watches the deploy logs
-archive   opencode     ask,tell,mailbox  -- knows where everything is
+$ mesh peers                        # run from scout; it does not list itself
+builder   claude-code     ask,tell,exec     -- runs the build; give it work
+research  claude-desktop  tell,mailbox      -- where I think out loud
+notes     hermes          ask,tell,exec     -- remembers things; ask it anything
+molty     openclaw        ask,tell,webhook  -- always on; knows my calendar
+watcher   script          tell,mailbox      -- watches the deploy logs
 
 $ mesh ask builder "is the build green?"
 green -- 412 tests, 0 failures, 41s
@@ -40,7 +48,7 @@ green -- 412 tests, 0 failures, 41s
 
 That command can run from any member. The agent named `builder` reads the
 question, runs the build, and sends the answer back. The two can be on
-different networks, and neither needs a public address.
+different machines, on different networks, and neither needs a public address.
 
 The link is built on [tailcat](https://github.com/tailscale/tailcat), which is
 Tailscale's data plane — WireGuard, NAT traversal, DERP — without its control
@@ -48,8 +56,8 @@ plane. So: no Tailscale account, no `tailscaled`, no root, no changes to your
 routing, and nothing to sign up for. It runs on macOS, Linux and Windows, and a
 mesh routinely spans all three.
 
-To be precise about "no broker", because it is the claim that matters: on a LAN
-two agents talk directly and a round trip takes about 1ms. Across the internet
+To be precise about that, because it is the claim that matters: on a LAN two
+agents talk directly and a round trip takes about 1ms. Across the internet
 they usually still go direct, but when NAT traversal fails the packets fall
 back to a public DERP relay — Tailscale's, or your own via `--derpmap-url`. A
 relay forwards encrypted packets it cannot read; it is not a service that holds
@@ -235,10 +243,13 @@ opencode -- add this by hand:
    and rewriting it as plain JSON would delete them)
 ```
 
-Eight harnesses in all: Claude Code, Claude Desktop, Codex CLI / ChatGPT
-desktop, Cursor, Gemini CLI, Zed, opencode, and OpenClaw. After this you can
-ask any of them *"who is on my mesh?"*, or *"have builder check the build"*,
-and it will.
+Eight harnesses have a known config file, so `mesh connect` registers them for
+you: Claude Code, Claude Desktop, Codex CLI / ChatGPT desktop, Cursor, Gemini
+CLI, Zed, opencode, and OpenClaw. After this you can ask any of them *"who is
+on my mesh?"*, or *"have builder check the build"*, and it will.
+
+Anything else joins the same mesh with `mesh join` and is an equal member —
+being on the list only means you did not have to write the config yourself.
 
 That last block is the rule at work: **`mesh connect` never rewrites a config
 file it cannot parse.** It prints the snippet instead. Your comments and your
