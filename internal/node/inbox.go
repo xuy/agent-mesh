@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xuy/agent-mesh/internal/adapter"
@@ -63,6 +64,34 @@ func (n *Node) Inbox(limit int, incoming bool) []wire.Envelope {
 	}
 	return out
 }
+
+// readCursor is the id of the last inbound message this node has been shown.
+//
+// Without it, waiting is a race: a message that arrived while the agent was
+// working is missed, because the wait only ever hears what comes next. An
+// agent that has to remember an id between turns to avoid losing messages is
+// an agent that will lose messages.
+func (n *Node) readCursor() string {
+	b, err := os.ReadFile(config.CursorPath(n.cfg.Name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func (n *Node) setReadCursor(id string) {
+	if id == "" {
+		return
+	}
+	path := config.CursorPath(n.cfg.Name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	os.WriteFile(path, []byte(id+"\n"), 0o600)
+}
+
+// Unread returns inbound messages the agent has not been shown yet.
+func (n *Node) Unread() []wire.Envelope { return n.since(n.readCursor()) }
 
 // since returns inbound messages newer than the given id. Message ids lead with
 // a millisecond timestamp, so they sort chronologically and a plain comparison

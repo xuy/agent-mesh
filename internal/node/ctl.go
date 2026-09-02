@@ -138,18 +138,24 @@ func (n *Node) serveCtlConn(c net.Conn) {
 				return
 			}
 		}
-		// A caller that says what it last saw must not miss anything that
-		// arrived while it was away.
+		// Anything that arrived while the agent was busy counts too. Waiting
+		// only for what comes next is a race the agent always eventually
+		// loses, and an agent that has to track an id between turns to avoid
+		// that will forget to.
+		missed := n.Unread()
 		if req.ID != "" {
-			if missed := n.since(req.ID); len(missed) > 0 {
-				enc.Encode(CtlResp{Kind: "ok", Msgs: missed})
-				return
-			}
+			missed = n.since(req.ID)
+		}
+		if len(missed) > 0 {
+			n.setReadCursor(missed[len(missed)-1].ID)
+			enc.Encode(CtlResp{Kind: "ok", Msgs: missed})
+			return
 		}
 		ch, release := n.Subscribe()
 		defer release()
 		select {
 		case e := <-ch:
+			n.setReadCursor(e.ID)
 			enc.Encode(CtlResp{Kind: "ok", Msgs: []wire.Envelope{e}})
 		case <-ctx.Done():
 			enc.Encode(CtlResp{Kind: "error", Error: "nothing arrived before the timeout"})

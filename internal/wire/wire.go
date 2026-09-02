@@ -65,6 +65,21 @@ type Envelope struct {
 
 	TS   time.Time `json:"ts,omitzero"`
 	Body string    `json:"body,omitempty"`
+
+	// Type and Data belong to whatever is built on top of the mesh, and the
+	// mesh never looks inside either.
+	//
+	// This is the whole platform position in two fields. A task protocol, a
+	// job queue, a code review workflow -- each wants its own vocabulary and
+	// its own payload, and if the mesh defined one of those it would be
+	// choosing for everybody and would be wrong for somebody. Carrying an
+	// opaque type and an opaque payload costs nothing and lets an application
+	// have a protocol without the substrate having an opinion.
+	//
+	// Type should be namespaced by whoever owns it ("task/progress"), so two
+	// applications on one mesh cannot collide.
+	Type string          `json:"type,omitempty"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // NewID returns a sortable unique message ID: a millisecond timestamp followed

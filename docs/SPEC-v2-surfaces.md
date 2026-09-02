@@ -71,96 +71,88 @@ desktop surfaces can now run `mesh` on the machine the person is sitting at.**
 Which makes the public-door design a fallback for genuinely thin clients rather
 than the ChatGPT story, and moves §5 to the bottom of the list where it belongs.
 
-## 2. What "amazing" means, concretely
+## 2. The mesh does not get a task model
 
-The moment to design for is small and specific: someone is talking to a chat
-app, and the thing they want doing lives on a computer that is not the one they
-are talking to. *Check whether the build went green. Clean up my downloads
-folder. Remember this for me. Look at what is eating disk on the Windows box.*
+The obvious next move is to build tasks into the mesh -- a task id, a state
+machine, progress, cancellation. It is the wrong move, and it is worth being
+precise about why, because the argument for it is superficially good.
 
-Today that means: stop, switch machines, find a terminal, re-explain. The
-feature is that you do not.
+**agent-mesh is a substrate.** Its job is that a named agent can reach another
+named agent, reliably, privately, from anywhere. A task model is an opinion
+about how work should be structured, and there will be several good ones: A2A
+has a task lifecycle, job queues have another, a code review workflow wants
+something else again. Baking one in decides for everybody and is wrong for
+somebody. TCP does not know about HTTP, and that is the reason both are still
+useful.
 
-Five things have to be true for it to feel like handing work to a colleague
-rather than firing a command into the dark.
+The test is whether communication alone is enough. `demo/handoff.sh` runs the
+whole scenario this document was written for -- a desktop chat hands work to a
+coding agent, the agent needs a clarification, asks it, gets an answer, and
+reports back -- with no task type on the wire at all:
 
-### D1. Setup is one command
+    desk  -> coder   "check whether the build is green"      thread t
+    coder -> desk    "which branch, main or release?"        thread t
+    desk  -> coder   "main"                                  thread t
+    coder -> desk    "main is green: 412 tests, 0 failures"  thread t
 
-Hand-editing a JSON config file is where most people stop. `mesh connect`
-should detect the desktop apps installed on this machine and register the mesh
-with each, then say what it did.
+Four messages, one thread, both directions. The "task" is a convention the two
+ends share. A different pair of agents can share a different one, and neither
+needs the mesh to agree.
 
-    $ mesh connect
-    Claude Desktop     configured (restart it to pick this up)
-    Cursor             configured
-    ChatGPT Desktop    needs a public endpoint -- see `mesh connect --help`
+What the substrate owes them is that the convention is expressible. So the
+envelope carries two fields the mesh never looks inside:
 
-Small, and the highest-leverage item on this list: everything else is worth
-nothing to someone who never got it working.
+    type   an application's own vocabulary, namespaced by its owner
+    data   an application's own payload
 
-### D2. A task is a first-class thing, not a long tool call
+That is the platform position in two fields. An application gets a protocol;
+the substrate keeps its lack of opinion. A task model can then be written on
+top -- by us, later, as a separate thing, or by somebody else entirely -- and
+the mesh does not change to accommodate it.
 
-This is the piece that makes the difference between a message pipe with a nice
-CLI and something you would actually hand work to.
+## 2b. What the substrate is still missing
 
-Today an `ask` is a connection held open until an answer comes back. That is
-fine for a question and wrong for work: it dies with the connection, it cannot
-be inspected, it cannot be cancelled, it cannot ask anything back, and it
-occupies a socket for ten minutes to deliver one paragraph.
+Which reframes this whole document. The gaps are not features of a task model.
+They are gaps in communication, and there are fewer of them than expected.
 
-A task is durable state on both sides:
+**Durable delivery.** A message to a peer that is offline should arrive when it
+returns. In progress on the Windows node as M3. This is what lets an
+application keep state across a restart without the mesh keeping it for them.
 
-    id, from, to, intent, thread
-    state:     accepted -> working -> (input-required <-> working) -> done | failed | cancelled
-    progress:  a stream you can attach to, late, more than once
-    artifacts: files it produced
-    cancel:    because a person changes their mind
+**Files.** Sending a patch, a screenshot, a log. This is a communication
+primitive by any reading -- it is *what* is being communicated -- and tailcat
+already ships SFTP, so the transport exists and the work is a verb over it.
+Without it every application invents base64-in-a-message, badly.
 
-Two properties matter more than the rest. **It survives a disconnection**, so
-you can close your laptop and ask later how it went. And **it survives a daemon
-restart**, because a task is state, not a socket -- which is the same
-realisation behind the offline spool, and they should share a store.
+**Waiting that cannot lose a message.** Found by writing the demo above, which
+hung the first time: `mesh wait` only heard what came *next*, so a message that
+arrived while the agent was working was missed. It now keeps a read cursor and
+reports what was missed first. An agent that has to track an id between turns
+to avoid losing messages is an agent that will lose messages.
 
-`mesh ask` stays exactly as it is. It is the cheap path, it is right for a
-question, and most traffic will keep using it. Tasks are for work.
+**Symmetric threads**, which already work: either end can send on a thread the
+other started, which is what made the clarification round trip possible without
+a request/response protocol.
 
-### D3. The far agent can ask a question back
+That is the list. Everything else in the original draft of this section --
+delegation, lifecycle, input-required, progress -- turned out to be an
+application built on those, not a change to them.
 
-`input-required` is the state that makes this feel like delegation instead of
-remote execution. "Which downloads folder — the one on the desktop or in your
-home directory?" surfaces in the chat, gets answered, and the task continues.
+## 2c. What still belongs to the surface
 
-Without it, every ambiguous task fails or guesses. With it, an agent that is
-unsure behaves the way a competent colleague does.
+Two things are genuinely about the person, not the substrate, and stay in this
+document:
 
-This is the single feature I would protect if the rest were cut.
+**Setup is one command.** `mesh connect` should detect the harnesses installed
+on this machine and give each the best integration it can take -- a skill where
+skills exist, an MCP server where that is the only option. Hand-editing a JSON
+config is where most people stop, and nothing else here reaches anyone without
+it.
 
-### D3b. Native beats projected
-
-Every harness that can run a program should talk to the mesh directly rather
-than through a tool-call shim, because the shim is where the task model gets
-flattened back into request/response.
-
-`mesh connect` should therefore install the *best available* integration per
-surface rather than the same one everywhere: a skill where skills exist, an MCP
-server where that is the only option, a config entry where the harness wants
-one. What a surface gets should be decided by what it can do, not by what is
-easiest to write once.
-
-### D4. The model picks the machine
-
-The user says "check the build", not "ask the node named windows". Nodes
-already carry a free-text note; that becomes a structured capability card —
-what this agent is for, what it can reach, what it must not be asked. The chat
-model reads the roster and routes.
-
-Naming a node stays possible. Needing to is the failure.
-
-### D5. Results that are not a paragraph
-
-A screenshot, a patch, a log, a file. tailcat already ships SFTP, so the
-transport exists; what is missing is treating a task's outputs as artifacts
-attached to the task rather than text stuffed into a reply.
+**The model picks the machine.** The person says "check the build", not "ask
+the node named windows". Nodes already carry a free-text note; a structured
+capability card would let a chat model route without being told. Naming a node
+stays possible; needing to is the failure.
 
 ## 3. What this means for safety
 
@@ -187,17 +179,18 @@ Three additions, none optional before anyone else installs this:
 
 ## 4. Sequencing
 
-The task model is the spine; everything else hangs off it.
+Finish the substrate, then make it reachable. Nothing here is a task model.
 
-1. **D2 the task model** — durable, resumable, cancellable, with progress. The
-   largest piece and the one that changes what this project is. Shares a store
-   with the offline spool, so it should land after or alongside that.
-2. **D3 `input-required`** — small once D2 exists, and it is the magic.
-3. **D1 `mesh connect`** — per-surface, native where possible. Cheap, and
-   nothing else reaches anyone without it.
-4. **§3 safety** — before any public instruction to install this.
-5. **D5 artifacts**, then **D4 capability cards**.
-6. **§5 the door**, only if someone actually needs a thin client.
+1. **Durable delivery** — in progress on the Windows node.
+2. **Files** — the last missing communication primitive.
+3. **`mesh connect`** — per-surface, native where possible.
+4. **The safety items in §3** — before any public instruction to install this.
+5. **Capability cards.**
+6. **A door for thin clients**, only if someone actually needs one.
+
+A task model, if we want one, is an application written on top afterwards --
+and it should be possible for someone else to write a different one without
+asking us.
 
 ## 5. A door for thin clients
 

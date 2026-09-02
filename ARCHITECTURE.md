@@ -622,3 +622,37 @@ First contact with a peer also retries once with a fresh client. A peer that
 started moments ago, or restarted while we held a cached tunnel, fails the
 first attempt and succeeds on the second, and retrying here is cheaper than
 making every caller understand why.
+
+## 20. Why there is no task model
+
+The obvious next feature was tasks in the mesh: an id, a state machine,
+progress, cancellation. It is the wrong feature, and the reasoning is worth
+keeping because the argument for it is superficially good.
+
+agent-mesh is a substrate. Its job is that a named agent can reach another
+named agent, reliably and privately, from anywhere. A task model is an opinion
+about how work should be structured, and there are several good ones. Baking
+one in decides for everybody and is wrong for somebody.
+
+The test is whether communication alone is sufficient, and `demo/handoff.sh`
+runs it: a desktop chat hands work to a coding agent, the agent needs a
+clarification, asks it on the same thread, gets an answer, and reports back.
+Four messages, one thread, both directions, no task type on the wire. The task
+is a convention the two ends share, and a different pair can share a different
+one.
+
+What the substrate owes them is that the convention is expressible, so the
+envelope carries `Type` and `Data` -- an application's own vocabulary and its
+own payload -- and never looks inside either. Two fields, and applications get
+a protocol while the substrate keeps its lack of opinion.
+
+Writing that demo also found the last real gap in waiting. It hung the first
+time, because `mesh wait` only heard what came *next*: a message that arrived
+while the agent was working was missed entirely. It now keeps a read cursor and
+reports what was missed before blocking. An agent that has to track an id
+between turns to avoid losing messages is an agent that will lose messages.
+
+The remaining substrate gaps are small and none of them are a task model:
+durable delivery for an offline peer, and sending a file. Everything the task
+model was going to provide -- delegation, lifecycle, questions asked back,
+progress -- turned out to be an application built on those.
