@@ -153,6 +153,7 @@ func Targets() []Target {
 			return filepath.Join(home(), ".config", "zed", "settings.json")
 		}),
 		opencodeTarget(),
+		openclawTarget(),
 	}
 }
 

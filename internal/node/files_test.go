@@ -114,3 +114,27 @@ func TestFileFramesRoundTrip(t *testing.T) {
 		t.Fatalf("binary chunk was corrupted: % x", got.Chunk)
 	}
 }
+
+// A daemon that runs for months must not quietly fill a disk.
+func TestAppendOnlyFilesAreRolled(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "inbox.jsonl")
+	big := make([]byte, maxLogBytes+1)
+	if err := os.WriteFile(p, big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rollIfLarge(p)
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("an oversized file was not rolled out of the way")
+	}
+	if _, err := os.Stat(p + ".1"); err != nil {
+		t.Error("the previous file was not kept")
+	}
+	// A small file is left exactly alone.
+	small := filepath.Join(dir, "small.jsonl")
+	os.WriteFile(small, []byte("one line\n"), 0o600)
+	rollIfLarge(small)
+	if b, err := os.ReadFile(small); err != nil || string(b) != "one line\n" {
+		t.Error("a small file was disturbed")
+	}
+}

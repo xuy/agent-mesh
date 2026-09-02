@@ -127,6 +127,47 @@ func opencodeTarget() Target {
 	}
 }
 
+// openclawTarget covers resident agents that are always running and have a
+// local API, of which OpenClaw is the one most people have.
+//
+// These are not tool-server clients -- they are peers. So this does not write a
+// tool-server entry; it explains how to run a node whose delivery mode is a
+// webhook into the agent's live session, which is the only mode that reaches an
+// agent that is already running with its context rather than starting a new one.
+// The endpoint and token are the person's own, so this cannot guess them.
+func openclawTarget() Target {
+	dirs := func() []string {
+		return []string{
+			filepath.Join(home(), ".openclaw"),
+			filepath.Join(home(), ".config", "openclaw"),
+		}
+	}
+	return Target{
+		Name: "openclaw", Label: "OpenClaw (or another resident agent)",
+		Present: func() bool {
+			for _, d := range dirs() {
+				if exists(d) {
+					return true
+				}
+			}
+			return hasBin("openclaw")
+		},
+		Connect: func(exe, node string) Result {
+			return Result{
+				Name: "openclaw", Label: "OpenClaw (or another resident agent)", Present: true,
+				Detail: "a resident agent is a peer, not a tool-server client",
+				Manual: fmt.Sprintf(`run it as its own node, delivering into its live session:
+
+    mesh join --name molty --agent openclaw       --webhook "http://127.0.0.1:8080/api/sessions/main/messages"       --webhook-header "Authorization: Bearer $YOUR_TOKEN"
+
+  (the port and token are from the agent's own gateway config. If it only
+   acknowledges a message rather than answering it, that is fine -- the answer
+   comes back later with 'mesh reply'.)`),
+			}
+		},
+	}
+}
+
 func hasBin(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil

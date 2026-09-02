@@ -5,14 +5,15 @@ the middle.**
 
 ```
 $ mesh ask windows "what's eating disk on the D drive?"
-Recycle Bin (41GB), an old Docker image cache (18GB), and hibernation. The
-first two are safe to clear; say the word.
+D: is 2.3TB, 296GB used, almost entirely one thing: SteamLibrary at 296.9GB.
+Everything else rounds to zero. C: is the one that's actually tight -- 430GB
+used, 220GB free.
 ```
 
-That went from a Mac to a Windows PC over an encrypted peer-to-peer link. No
-relay service, no account, no hosted agent, no port forwarding. The machine
-that answered is running an agent of its own, and it answered because it wanted
-to, not because something proxied a command into it.
+That is a real exchange, not an illustration. It went from a Mac to a Windows
+PC over an encrypted peer-to-peer link: no relay service, no account, no hosted
+agent, no port forwarding. The machine that answered is running an agent of its
+own, and it answered because it chose to — nothing proxied a command into it.
 
 Built on [tailcat](https://github.com/tailscale/tailcat) — Tailscale's data
 plane (WireGuard, NAT traversal, DERP for bootstrap) without its control plane.
@@ -210,6 +211,11 @@ coordinator killed by `SIGKILL` and nobody touching anything: **2s to restart,
 - **Discovery has a single point**, though traffic never does. While the
   coordinator is down, existing peers keep talking off cached rosters.
 - **tailcat has no API stability promise.** Pinned.
+- **A desktop chat driving the mesh has your node's authority.** `mesh connect`
+  makes a chat model able to ask your peers things — and that model reads web
+  pages. Peer-side controls are the defence that matters (`mesh allow`,
+  `mesh block`, and executing nodes starting closed), but giving the desktop
+  surface *less* authority than the agent at the same machine is not built yet.
 
 ## Design
 

@@ -16,10 +16,27 @@ import (
 // appendInbox records an envelope in the node's append-only log. Everything the
 // node sends and receives lands here, so an agent that was not watching can
 // always catch up on what it missed.
+// maxLogBytes caps the append-only files a long-running node writes. A daemon
+// that runs for months should not quietly fill a disk, and the interesting
+// window is always recent; one previous file is kept so a restart does not lose
+// the minutes before it.
+const maxLogBytes = 16 << 20
+
+// rollIfLarge renames a file out of the way once it is too big. Called with the
+// inbox lock held.
+func rollIfLarge(path string) {
+	st, err := os.Stat(path)
+	if err != nil || st.Size() < maxLogBytes {
+		return
+	}
+	os.Rename(path, path+".1")
+}
+
 func (n *Node) appendInbox(e wire.Envelope) {
 	n.inboxMu.Lock()
 	defer n.inboxMu.Unlock()
 	path := config.InboxPath(n.cfg.Name)
+	rollIfLarge(path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
@@ -146,6 +163,7 @@ func (n *Node) audit(e wire.Envelope, outcome, reason string) {
 	n.inboxMu.Lock()
 	defer n.inboxMu.Unlock()
 	path := config.AuditPath(n.cfg.Name)
+	rollIfLarge(path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
