@@ -71,10 +71,6 @@ func sendFiles(wc *wire.Conn, from, to, corr string, files []wire.File) error {
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
-				last := false
-				if peek, perr := src.Read(nil); peek == 0 && perr == io.EOF {
-					last = true
-				}
 				frame := wire.Envelope{
 					Corr: corr, From: from, To: to, Kind: wire.KindFile,
 					Index: i, Chunk: append([]byte(nil), buf[:n]...),
@@ -83,7 +79,6 @@ func sendFiles(wc *wire.Conn, from, to, corr string, files []wire.File) error {
 					src.Close()
 					return serr
 				}
-				_ = last
 			}
 			if err == io.EOF {
 				break

@@ -35,12 +35,16 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh doctor                 what is wrong and what to run next
   mesh version                which build this is
 
-  mesh hub [--mesh NAME]      start the control plane (once per mesh)
-  mesh invite                 print the string that lets another machine join
-  mesh up / mesh down         run or stop this node's daemon by hand
-  mesh service install        keep this node running across reboots and crashes
+Setting up:
+
+  mesh invite --lan           add a machine on this network: it needs one code
+  mesh invite                 add a machine anywhere: it needs one string
   mesh connect                register the mesh with the agents installed here
-  mesh mcp                    serve the mesh as MCP tools over stdio
+  mesh service install        keep this node running across reboots and crashes
+  mesh up / mesh down         run or stop this node's daemon by hand
+  mesh mcp                    serve the mesh as tools, for a harness that wants them
+  mesh hub                    run the control plane as its own process (rarely needed:
+                              the first node to join coordinates by default)
 
 Run "mesh <command> --help" for a command's options.`
 
