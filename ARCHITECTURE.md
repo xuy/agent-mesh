@@ -3,8 +3,12 @@
 A named mesh where any agent that can run a CLI can address any other agent by
 name, over an encrypted p2p link, with no dependency on any vendor's backend.
 
-Status: **built and running.** Section 12 records what the build changed about
-this design, and section 13 what a fresh agent gets for free.
+**How to read this.** Sections 1-13 are the design as it stands. Sections 14
+onwards are a log: what broke when the design met a second machine, a second
+operating system and a second agent, and what each failure changed. The log is
+the more useful half. Almost every real bug in it was found by running the
+thing rather than reasoning about it, and several were found by the agent on
+the other machine reading this one's code.
 
 ---
 
@@ -103,126 +107,151 @@ Newline-delimited JSON. One connection per request, kept open for the reply so
 long-running agent work can stream.
 
 ```jsonc
-// request
-{"v":1,"id":"01J…","from":"master","to":"opencode","kind":"ask",
- "thread":"t-4f2","deadline":"2026-09-01T20:04:00Z","body":"is the build green?"}
+// a question, with a file attached
+{"v":1,"id":"1a05…","from":"mac","to":"windows","kind":"ask","thread":"t-4f2",
+ "deadline":"2026-09-02T20:04:00Z","body":"why did this crash?",
+ "files":[{"name":"crash.log","size":38724,"sum":"5097…"}]}
+
+// the attachment, in frames, immediately after
+{"v":1,"corr":"1a05…","kind":"file","index":0,"chunk":"…base64…"}
+{"v":1,"corr":"1a05…","kind":"file","index":0,"last":true}
 
 // reply frames, same connection
-{"v":1,"corr":"01J…","kind":"chunk","body":"checking…"}
-{"v":1,"corr":"01J…","kind":"done","body":"green, 412 tests, 0 failures"}
-{"v":1,"corr":"01J…","kind":"error","body":"adapter exited 1: …"}
+{"v":1,"corr":"1a05…","kind":"chunk","body":"reading it…"}
+{"v":1,"corr":"1a05…","kind":"done","body":"a nil map write on line 88"}
 ```
 
 `kind`:
 - `tell` — fire and forget; appended to the recipient's inbox, `ack` returned.
 - `ask` — request/response; the recipient's adapter produces the reply.
+- `file` — one frame of an announced attachment (§22).
 - `chunk` / `done` / `error` — reply frames.
 
 `thread` groups an exchange so an adapter can keep model context across turns
-(§7). Unknown fields are ignored, so the format can grow.
+(§7), and either side may send on a thread the other started — which is what
+lets a delegated task come back with a question (§21).
 
-## 6. The node daemon (`meshd`)
+`type` and `data` carry an application's own vocabulary and payload, and the
+mesh never looks inside either (§21). Unknown fields are ignored, so the format
+can grow without a version bump.
 
-One process per agent. Holds:
+## 6. The node daemon
 
-1. a `tailcat.Server` with `OnTCP(7020)` → the wire handler above;
-2. a **client cache** — one `tailcat.Client` per peer, dialed lazily, reused,
-   so only the first message to a peer pays the DERP handshake;
-3. a **unix control socket** at `~/.mesh/<name>.sock` — how the local CLI (and
-   therefore how *I*, via Bash) sends without paying startup cost;
-4. an **inbox** at `~/.mesh/inbox/<name>.jsonl`, append-only;
-5. a **registrar loop** — register with the hub, hold a long-lived subscribe
-   connection for roster pushes, heartbeat every 30s, cache roster to disk.
+One long-lived process per agent, because bringing up a tunnel costs a netcheck
+and a relay handshake and no one should pay that per message. It holds:
 
-## 7. Agent adapters — what makes this a *mesh of agents*
+1. a `tailcat.Server` serving the wire protocol on 7020, and the control plane
+   on 7010 if this node coordinates (§14);
+2. a **client cache** — one client per peer, dialed lazily and reused, rebuilt
+   when the peer's address or start time changes (§14);
+3. a **control socket**, how the local CLI reaches the daemon in microseconds;
+4. an **inbox** and an **audit log**, append-only and size-capped;
+5. a **registrar loop** holding one connection to the coordinator, which
+   carries registration, liveness and roster pushes at once;
+6. a **policy store** consulted per message (§18);
+7. a **relay watchdog**, because a node can be healthy locally and unreachable
+   from everywhere else, and that is invisible without one (§16).
 
-An adapter turns an inbound `ask` into a reply. Two, both built:
+## 7. How a question gets answered
 
-- **`mailbox`** (default; what `master` runs). The message lands in the inbox
-  and the ask parks. I read it with `mesh inbox` and answer with
-  `mesh reply <id> "…"`. Zero integration — works for any agent, including a
-  human.
-- **`exec`** (what `opencode` runs). The daemon shells out to a configured
-  command and streams stdout back as the reply:
-  `mesh up --name opencode --exec 'opencode run --agent build {{body}}'`.
-  For opencode specifically, the daemon maps `thread` → an opencode session id
-  and appends `--session <id>`, so a multi-turn exchange keeps model context on
-  the far side. That is the difference between a message pipe and an agent
-  mesh.
+A **delivery mode** decides how an inbound question reaches whoever answers it.
+This is the only per-agent work the mesh ever requires, which is what keeps
+adding an agent cheap:
 
-Concurrency, timeouts and a max in-flight cap live in the adapter layer, not in
+- **`mailbox`** parks the question for `mesh reply`. No integration at all, so
+  it works for any agent and for a human. The default.
+- **`exec`** runs a command and streams its stdout back — a fresh agent
+  session. The question arrives in `$MESH_BODY` and on stdin, never
+  interpolated into a command line. `$MESH_CONTINUE` says whether this thread
+  has been seen before, which is how a multi-turn exchange keeps model context
+  on the far side.
+- **`webhook`** POSTs into a resident agent's local API, reaching a session
+  that is *already running* with its context. It accepts either an answer in
+  the response or a bare acknowledgement followed later by `mesh reply`, which
+  is how a resident assistant actually behaves (§14).
+- **`notify`** parks the question but runs a command first, so an idle agent or
+  a human finds out it is there.
+
+Concurrency, timeouts and streaming live in the adapter layer rather than in
 each adapter.
 
 ## 8. CLI surface
 
 ```
-mesh init   --name master              # generate node key + config
-mesh hub                               # run the control plane; prints join token
-mesh up     --hub <blob> [--exec CMD]  # run the node daemon
-mesh peers                             # roster: name, pubkey, kinds, last seen
-mesh ping   <peer>                     # tunnel liveness + direct-vs-DERP path
-mesh send   <peer> <text>              # tell
-mesh ask    <peer> <text> [--timeout]  # ask, stream the reply to stdout
-mesh inbox  [--follow] [--json]        # read what came in
-mesh reply  <id> <text>                # answer a parked ask (mailbox adapter)
+mesh join      join or found a mesh, and start answering
+mesh connect   register the mesh with the agent harnesses installed here
+mesh service   keep this node running across reboots and crashes
+mesh invite    a string, or --lan for an eight-character pairing code
+
+mesh peers     who is here and what they are for
+mesh ask       ask a peer, or @group, and wait for the answer
+mesh send      tell a peer or @group; --file attaches a file
+mesh wait      block until a peer speaks, then exit
+mesh waiting   questions addressed to you · mesh reply answers one
+mesh inbox     everything said to you · mesh log what was asked, refusals too
+
+mesh trust     what each peer may do here
+mesh allow / deny / block / unblock / verify / forget
+mesh id        this node's fingerprint
+
+mesh status / doctor / guide / ping / group / version
+mesh mcp       serve the mesh as tools for a harness that speaks MCP
 ```
 
-`send`/`ask`/`inbox` talk to the local daemon over the unix socket, so they
-return immediately and are safe to call from a tool loop.
+Everything that touches the mesh goes through the local daemon over a unix
+socket, so a command returns in microseconds and is safe to call from a tool
+loop. Every command takes `--json`.
 
 ## 9. Known limits, stated up front
 
-- **Public DERP relays are rate-limited with no uptime guarantee** (tailcat's
-  own README says so). Fine for a prototype; the fix is a self-hosted DERP,
-  which is a config change (`--derpmap-url`), not a redesign.
-- **The hub is a single point of discovery**, though not of traffic. If it is
-  down, new peers cannot join and address changes do not propagate; existing
-  peers keep working off the cached roster.
-- **No store-and-forward.** Messaging an offline peer fails fast rather than
-  queueing. Adding a hub-side spool later is additive.
+- **No store-and-forward yet.** Messaging an offline peer fails immediately
+  rather than queueing.
+- **The public DERP relays are rate-limited with no uptime guarantee** —
+  tailcat's own README says so. They are bootstrap and fallback; a self-hosted
+  relay is a config change (`--derpmap-url`), not a redesign.
+- **A blocked peer can still open a tunnel**, it just cannot say anything
+  through it: tailcat can grant a peer key at runtime but not revoke one, so
+  refusal happens a layer up, per message (§18).
+- **The coordinator accepts tunnels from nodes it does not know**, because that
+  is what joining is (§14). It still refuses to talk to anyone outside the
+  roster.
+- **Discovery has a single point**, though traffic never does. While the
+  coordinator is down, existing peers keep talking off cached rosters.
+- **A desktop chat driving the mesh has this node's authority**, and that model
+  reads web pages. Peer-side controls are the defence; giving the desktop
+  surface less authority than the agent beside it is not built.
 - **tailcat has no API stability promise** and its wire format may change.
   Pinned at v0.4.0.
-- Two nodes on this one Mac still bootstrap through DERP before upgrading to a
-  direct path. Expect a slow first message, fast steady state — `mesh ping`
-  reports which path is in use so this is observable, not folklore.
 
-## 10. Build order
+## 10. What was built, in order
 
-Each milestone is independently demonstrable.
-
-1. **Data plane.** `wire`, `meshd`, unix socket, `send`/`ask`/`inbox`, peers
-   from a static file. Demo: two daemons on this Mac, both mailbox, message
-   round-trips. Verifies the remote-addr→pubkey attribution assumption.
-2. **Control plane.** `meshhub`, register/roster/subscribe, name claiming, join
-   secret, disk-cached roster, `mesh peers`. Demo: a node joins with one token
-   and discovers the other by name.
-3. **Agent adapters.** `exec` adapter + opencode session threading. Demo: I run
-   `mesh ask opencode "…"` and a real model answer comes back — the deliverable
-   the prototype was asked for.
-4. **Hardening + docs.** Allowlist enforcement, timeouts, `mesh ping` path
-   reporting, README with a cross-machine (`@Windows`) runbook.
-
-Not in scope for the prototype, but the design leaves room: hub-side spool,
-self-hosted DERP, an MCP server so opencode can call `mesh` as a native tool
-instead of shelling out, and group/broadcast addressing.
+The plan was four milestones and it survived contact roughly intact: data
+plane, control plane, adapters, hardening. What it did not predict is in the
+log from §14 onwards — that a node needs two keys, that a coordinator must not
+allowlist, that pinning an address breaks the tunnel cache, and that a task
+model was the wrong feature entirely.
 
 ## 11. Repo layout
 
 ```
-noah-mesh/
-  cmd/mesh/            # single binary, all subcommands
-  internal/wire/       # envelope + framing
-  internal/node/       # daemon: tailcat server, client cache, ctl socket, inbox
-  internal/hub/        # control plane
-  internal/adapter/    # mailbox, exec
-  internal/config/     # ~/.mesh: node.key, config.json, roster.json, join.key
-  demo/                # two-agent scripts
-  ARCHITECTURE.md README.md
+agent-mesh/
+  cmd/mesh/            # the single binary: every subcommand, the skill, the guide
+  internal/wire/       # the envelope and its framing
+  internal/node/       # the daemon: tunnel, client cache, control socket,
+                       #   inbox, attachments, the relay watchdog
+  internal/hub/        # the control plane, run inside the coordinator's daemon
+  internal/adapter/    # how a question is answered: mailbox, exec, webhook, notify
+  internal/policy/     # who may do what here, and how fast
+  internal/pair/       # LAN pairing: discovery and the encrypted handoff
+  internal/connect/    # registering with the agent harnesses on this machine
+  internal/service/    # launchd, systemd, Task Scheduler
+  internal/ident/      # keys, fingerprints, and the address derivation
+  internal/config/     # everything on disk, and the invite format
+  demo/                # runnable: two agents, a delegation, a resident-agent stub
+  docs/                # the bar this had to clear, and where it goes next
 ```
 
-Module path `github.com/ericxu/mesh`, binary `mesh` — deliberately not
-Noah-branded; this is infrastructure, not a Noah feature.
-
+Module path `github.com/xuy/agent-mesh`, binary `mesh`.
 
 ## 12. What the build changed
 

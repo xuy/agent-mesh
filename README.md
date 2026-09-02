@@ -56,9 +56,12 @@ coordinates it from inside its own daemon.
 
 **On the first machine:**
 
-    $ mesh join --name mac --note "my laptop; ask me about the repos"
+    $ mesh join --name mac --mesh home --note "my laptop; ask me about the repos"
     created mesh "home" with mac as its coordinator
     You are "mac" on mesh "home".
+
+(`--mesh` is only needed once, by whoever goes first. Leave it out and the mesh
+is named after the machine.)
 
     $ mesh service install     # survives reboots and crashes
 
