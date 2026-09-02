@@ -250,6 +250,23 @@ be any process rather than one of a supported list of coding agents.
 through someone else's servers and it works only for machines they support.
 That is the trade this exists to avoid.
 
+## Proving it works
+
+    ./demo/smoke.sh
+
+Brings up two throwaway nodes on real tunnels and checks every claim on this
+page: discovery, an exec node answering, threads keeping context, a file
+arriving with its bytes intact, a group fanning out, a block biting on the next
+message, and a blocked `wait` returning the moment a peer speaks. Sixteen
+checks, two minutes, nothing left behind.
+
+It found the bug that mattered most: the quickstart on this page did not work,
+because an exec node started closed to everyone. The things that break are the
+things only a real tunnel exercises.
+
+    ./demo/handoff.sh <a> <b>    a delegation with a clarification round trip
+    ./demo/two-agents.sh         the two-agent setup, end to end
+
 ## Design
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the honest version: what was built, what
