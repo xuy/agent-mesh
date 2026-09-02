@@ -1,0 +1,66 @@
+#!/bin/sh
+# Two agents push this repo from two machines, and a merge here is a ship.
+# Everything below is a failure that has actually happened or was one command
+# away, so the check is mechanical rather than a line in a document someone has
+# to remember at the moment they are least likely to.
+#
+# Enable once per clone:  make hooks
+# Bypass, deliberately:   MESH_PUSH_ANYWAY=1 git push ...
+
+set -e
+
+remote_name="$1"
+protected="main"
+zero="0000000000000000000000000000000000000000"
+
+if [ -n "$MESH_PUSH_ANYWAY" ]; then
+	echo "pre-push: MESH_PUSH_ANYWAY set -- skipping every check" >&2
+	exit 0
+fi
+
+fail() {
+	echo >&2
+	echo "pre-push: $1" >&2
+	shift
+	for line in "$@"; do echo "  $line" >&2; done
+	echo >&2
+	exit 1
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+	case "$remote_ref" in
+	"refs/heads/$protected") ;;
+	*) continue ;;
+	esac
+
+	# Deleting the protected branch is never something we mean to do.
+	[ "$local_sha" = "$zero" ] && fail "refusing to delete $protected on $remote_name"
+
+	if [ "$remote_sha" != "$zero" ]; then
+		# remote_sha is the remote's real tip as of this push, so this catches
+		# both a force-push and a push racing another machine's commits. It is
+		# the check that would have caught rewriting a commit the peer had
+		# already pulled.
+		if ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+			fail "this push would discard commits on $protected that are not in your history." \
+				"Someone else pushed while you were working. Do NOT force." \
+				"" \
+				"    git pull --rebase origin $protected" \
+				"    go test ./... && git push" \
+				"" \
+				"If you truly mean to discard $(git rev-parse --short "$remote_sha"), say so out loud" \
+				"to the other agent first, then MESH_PUSH_ANYWAY=1 git push --force-with-lease."
+		fi
+	fi
+
+	# Merge is the ship, so main is never allowed to be red.
+	command -v go >/dev/null 2>&1 || fail "go is not on PATH, so this push cannot be verified" \
+		"Install Go, or push with MESH_PUSH_ANYWAY=1 if you know the tree is green."
+
+	echo "pre-push: verifying $protected before it ships..." >&2
+	go vet ./... >&2 || fail "go vet failed -- $protected must not ship red"
+	go test ./... >&2 || fail "tests failed -- $protected must not ship red"
+	echo "pre-push: green, pushing" >&2
+done
+
+exit 0
