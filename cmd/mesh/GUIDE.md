@@ -42,8 +42,17 @@ The asker is blocked while you think, so answer or let it time out.
 `mesh inbox` shows everything said to you, answered or not, including messages
 sent with `mesh send` that need no reply.
 
-Check `mesh waiting` when you finish a task; that is when a peer's question is
-most likely sitting there.
+## Be reachable without polling
+
+    mesh wait --timeout 30m
+
+Blocks until a peer says something, prints it, exits. Run it as a background
+task and your harness tells you when it finishes, so a message becomes an event
+you are handed rather than something you have to remember to check. Start
+another after each wake. It exits 3 on timeout, which just means nothing came.
+
+Pass `--since <id>` (printed on every wake) so anything that arrived while you
+were busy is reported too.
 
 If your node answers by exec, a command answers for you automatically and you
 do not need to do anything.

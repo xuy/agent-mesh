@@ -92,6 +92,31 @@ func (n *Node) serveCtlConn(c net.Conn) {
 		enc.Encode(CtlResp{Kind: "ok", Peers: n.Peers()})
 	case "inbox":
 		enc.Encode(CtlResp{Kind: "ok", Msgs: n.Inbox(req.Limit, req.Incoming)})
+	case "wait":
+		// Anything already parked counts as having arrived: a peer blocked on
+		// us right now is more urgent than the next message.
+		if n.mailbox != nil {
+			if q := n.mailbox.Waiting(); len(q) > 0 && req.ID == "" {
+				enc.Encode(CtlResp{Kind: "ok", Msgs: n.recent(q)})
+				return
+			}
+		}
+		// A caller that says what it last saw must not miss anything that
+		// arrived while it was away.
+		if req.ID != "" {
+			if missed := n.since(req.ID); len(missed) > 0 {
+				enc.Encode(CtlResp{Kind: "ok", Msgs: missed})
+				return
+			}
+		}
+		ch, release := n.Subscribe()
+		defer release()
+		select {
+		case e := <-ch:
+			enc.Encode(CtlResp{Kind: "ok", Msgs: []wire.Envelope{e}})
+		case <-ctx.Done():
+			enc.Encode(CtlResp{Kind: "error", Error: "nothing arrived before the timeout"})
+		}
 	case "waiting":
 		if n.mailbox == nil {
 			fail(fmt.Errorf("%s answers with an exec adapter, so nothing waits for a human", n.cfg.Name))
@@ -134,7 +159,9 @@ func (n *Node) serveCtlConn(c net.Conn) {
 		enc.Encode(CtlResp{Kind: "ok", Body: "stopping " + n.cfg.Name})
 		go func() { time.Sleep(100 * time.Millisecond); n.Close(); os.Exit(0) }()
 	default:
-		fail(fmt.Errorf("unknown command %q", req.Op))
+		// Almost always version skew: the CLI was rebuilt and the daemon is
+		// still the process the service manager started from the old binary.
+		fail(fmt.Errorf("this daemon does not know the command %q -- it is probably older than your `mesh` binary. Restart it with `mesh down --name %s && mesh up --name %s`", req.Op, n.cfg.Name, n.cfg.Name))
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"time"
 
 	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/node"
@@ -36,10 +37,20 @@ func cmdService(args []string) error {
 		if err != nil {
 			return err
 		}
-		// The service starts its own daemon; leaving the hand-started one
-		// running would fight it for the control socket.
+		// The service will start its own daemon, and two daemons for one node
+		// evict each other from the relay, so the hand-started one has to go.
+		// Say so: a daemon that disappears without explanation during an
+		// install is indistinguishable from a crash to whoever is watching.
 		if c, err := node.Dial(nm); err == nil {
+			fmt.Printf("stopping the daemon you started by hand; %s will run it from now on\n", m.Describe())
 			c.Do(node.CtlReq{Op: "stop"}, nil)
+			// Let it release the control socket before the service claims it.
+			for i := 0; i < 20; i++ {
+				if _, err := node.Dial(nm); err != nil {
+					break
+				}
+				time.Sleep(250 * time.Millisecond)
+			}
 		}
 		if err := m.Install(nm, exe); err != nil {
 			return err

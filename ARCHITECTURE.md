@@ -466,3 +466,66 @@ one. Existing peers keep working from their cached roster, but an invite handed
 out earlier points at the old relay. Re-pinning on a large latency change, and
 telling peers the new address over the connection they already hold, is the fix,
 and it is not built yet.
+
+## 17. Being reachable without polling
+
+Two agents on a mesh still could not work together unattended, because neither
+could notice a message. Both were on `mailbox` delivery, which parks a question
+until someone runs `mesh waiting` -- and an agent sitting at its prompt never
+does. The human went back to being the messenger, which is the thing this
+project exists to delete.
+
+`mesh wait` blocks until a peer says something, prints it, and exits. That
+shape is deliberate: every agent harness already knows how to run a command in
+the background and report when it finishes, so a message becomes an event the
+agent is handed rather than a habit it has to remember. No new integration, no
+daemon-to-agent protocol, no polling loop -- one blocking command and an exit
+code.
+
+Inside, the daemon keeps a set of subscribers and notifies them as inbound
+messages arrive. The channels are buffered and dropped on overflow: a watcher
+that has stopped reading must never be able to stop the node answering its
+peers. Anything already parked counts as arrived, so a peer blocked on us right
+now is reported immediately rather than after the next message; and
+`--since <id>` reports what landed while the agent was busy, so nothing falls
+between two waits.
+
+This is the generic form of the `mcp` delivery mode from section 14 -- the
+adapter that costs nothing per agent -- and it is what makes the mesh usable by
+an agent whose harness has no hooks at all.
+
+### A peer must not become a stranger
+
+Testing it turned up a third instance of the family of bugs this design keeps
+producing. The Windows node had already fixed one: a coordinator restart pushes
+a roster holding only the nodes that have reconnected so far, and writing that
+through erased the on-disk cache at exactly the moment it was the only way left
+to reach anyone.
+
+The same wipe was still happening in memory. A restarted coordinator forgot
+every peer, so a legitimate node's next message was refused with "you are not in
+the roster" -- wrong, and alarming, for the whole reconnection window. The
+roster now merges rather than replaces: presence comes from the live roster,
+identity persists. A peer that is not currently connected shows as offline
+instead of vanishing, which is also simply more useful to look at.
+
+The general lesson, three times over: a roster is two different things wearing
+one name. Who is reachable right now changes constantly and should be replaced
+wholesale. Who exists at all changes rarely and must never be dropped because a
+transport hiccuped.
+
+### Two daemons for one node
+
+The already-running check lived inside the branch that detaches, so
+`mesh up --foreground` skipped it -- and that is precisely the command a
+service manager runs. Installing the service while a hand-started daemon was
+up therefore started a second one for the same node.
+
+That is worse than it sounds. Both daemons share the node's key, and a DERP
+relay admits one connection per key, so the second silently evicts the first
+from the relay: a node that appears to be running and cannot be reached. The
+check now happens before anything starts, in both modes.
+
+The same install path also stopped the running daemon without saying so, which
+from the outside is indistinguishable from a crash. It says so now, and waits
+for the control socket to be released before handing over.

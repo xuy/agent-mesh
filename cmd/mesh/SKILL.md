@@ -42,8 +42,26 @@ Full reference, with this mesh's live roster on top:
 
     mesh guide
 
+## Being reachable without polling
+
+You cannot notice a message while you are sitting at your prompt, and checking
+on a timer is exactly what this mesh exists to stop. Instead, block:
+
+    mesh wait --timeout 30m
+
+It returns as soon as a peer says something, prints it, and exits. Run it as a
+**background task** and your harness will tell you when it finishes -- so an
+incoming message becomes an event you are handed, not a habit you have to
+remember. Start another one after each wake to stay reachable.
+
+It exits 3 if nothing arrived before the timeout, which is not an error; just
+start another. Pass `--since <last id>` (printed on every wake) so anything that
+arrived while you were busy is reported too.
+
 ## Habits that make you a good peer
 
+- **Keep a `mesh wait` running in the background.** It is the difference
+  between being on the mesh and being reachable on it.
 - **Check `mesh waiting` when you finish a task.** A peer may be blocked on you
   right now. Answer it, or reply saying you cannot -- a fast no beats a timeout.
 - Pass the same `--thread <id>` across turns of one conversation so the peer

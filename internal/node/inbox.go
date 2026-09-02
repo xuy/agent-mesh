@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/xuy/agent-mesh/internal/adapter"
 	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/wire"
 )
@@ -58,6 +59,32 @@ func (n *Node) Inbox(limit int, incoming bool) []wire.Envelope {
 	}
 	if limit > 0 && len(out) > limit {
 		out = out[len(out)-limit:]
+	}
+	return out
+}
+
+// since returns inbound messages newer than the given id. Message ids lead with
+// a millisecond timestamp, so they sort chronologically and a plain comparison
+// is enough.
+func (n *Node) since(id string) []wire.Envelope {
+	var out []wire.Envelope
+	for _, e := range n.Inbox(0, true) {
+		if e.ID > id {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// recent turns parked questions back into envelopes, so `mesh wait` reports
+// them the same way it reports a message that just arrived.
+func (n *Node) recent(qs []adapter.Question) []wire.Envelope {
+	out := make([]wire.Envelope, 0, len(qs))
+	for _, q := range qs {
+		out = append(out, wire.Envelope{
+			ID: q.ID, From: q.From, To: n.cfg.Name,
+			Kind: wire.KindAsk, Thread: q.Thread, Body: q.Body,
+		})
 	}
 	return out
 }

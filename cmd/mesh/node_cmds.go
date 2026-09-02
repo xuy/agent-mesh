@@ -360,11 +360,20 @@ func cmdUp(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !*fg {
-		if _, err := node.Dial(nm); err == nil {
+
+	// Check this before starting anything, and in both modes. Two daemons for
+	// one node is worse than it looks: they share a node key, and a DERP relay
+	// admits one connection per key, so the second silently evicts the first
+	// from the relay. The foreground path skipped this check, which is exactly
+	// the path a service manager runs.
+	if _, err := node.Dial(nm); err == nil {
+		if !*fg {
 			fmt.Printf("%s is already running\n", nm)
 			return nil
 		}
+		return fmt.Errorf("%s is already running -- stop it first with `mesh down --name %s`", nm, nm)
+	}
+	if !*fg {
 		return spawnDaemon(nm, 90*time.Second)
 	}
 

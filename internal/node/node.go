@@ -64,6 +64,41 @@ type Node struct {
 
 	inboxMu sync.Mutex
 	closed  chan struct{}
+
+	// waiters are blocked `mesh wait` calls. An agent that is not polling has
+	// no other way to learn a message arrived, and polling is exactly what
+	// this whole project exists to stop people doing.
+	waitersMu sync.Mutex
+	waiters   map[chan wire.Envelope]struct{}
+}
+
+// Subscribe returns a channel that receives inbound messages until release is
+// called. The channel is buffered and dropped on overflow: a slow watcher must
+// not be able to block the node from answering its peers.
+func (n *Node) Subscribe() (<-chan wire.Envelope, func()) {
+	ch := make(chan wire.Envelope, 16)
+	n.waitersMu.Lock()
+	if n.waiters == nil {
+		n.waiters = map[chan wire.Envelope]struct{}{}
+	}
+	n.waiters[ch] = struct{}{}
+	n.waitersMu.Unlock()
+	return ch, func() {
+		n.waitersMu.Lock()
+		delete(n.waiters, ch)
+		n.waitersMu.Unlock()
+	}
+}
+
+func (n *Node) notifyWaiters(e wire.Envelope) {
+	n.waitersMu.Lock()
+	defer n.waitersMu.Unlock()
+	for ch := range n.waiters {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
 }
 
 type peerClient struct {
@@ -278,7 +313,7 @@ func (n *Node) serveTunnel(c net.Conn) {
 	// anyone not on the allowlist, so this only picks which allowed peer it is.
 	caller, ok := n.peerAt(remoteAddr(c))
 	if !ok {
-		wc.Send(wire.Envelope{Kind: wire.KindError, Body: "you are not in " + n.cfg.Name + "'s roster"})
+		wc.Send(wire.Envelope{Kind: wire.KindError, Body: n.cfg.Name + " does not know you. If you are on this mesh, its coordinator may have just restarted; try again in a minute."})
 		return
 	}
 
@@ -293,6 +328,7 @@ func (n *Node) serveTunnel(c net.Conn) {
 	}
 	e.From = caller
 	n.appendInbox(e)
+	n.notifyWaiters(e)
 
 	switch e.Kind {
 	case wire.KindTell:
@@ -510,13 +546,29 @@ func (n *Node) allowlisting() bool { return n.coord == nil }
 // prototype rather than a property to rely on.
 func (n *Node) applyRoster(rs []ident.Info) {
 	n.mu.Lock()
-	n.roster = map[string]ident.Info{}
-	n.byAddr = map[netip.Addr]string{}
+	next := map[string]ident.Info{}
 	for _, i := range rs {
 		if i.Name == n.cfg.Name {
 			continue
 		}
-		n.roster[i.Name] = i
+		i.Online = true
+		next[i.Name] = i
+	}
+	// A peer missing from this roster is not a peer we have never met. The
+	// coordinator builds the roster from its live sessions, so a restart
+	// reports an empty mesh until everyone reconnects -- and forgetting them
+	// in that window would make us reject their messages with "you are not in
+	// the roster", which is both wrong and alarming. Keep what we knew, marked
+	// offline, and let presence come from the roster while identity persists.
+	for name, prev := range n.roster {
+		if _, live := next[name]; !live {
+			prev.Online = false
+			next[name] = prev
+		}
+	}
+	n.roster = next
+	n.byAddr = map[netip.Addr]string{}
+	for _, i := range n.roster {
 		if a, err := i.ClientAddr(); err == nil {
 			n.byAddr[a] = i.Name
 		}
@@ -527,7 +579,10 @@ func (n *Node) applyRoster(rs []ident.Info) {
 	}
 	n.mu.Unlock()
 
-	if n.allowlisting() {
+	// The roster can be applied before the tunnel exists -- a cached roster is
+	// loaded at startup, and tests apply one directly -- so there may be no
+	// server to widen yet. Start installs the allowlist again once it is up.
+	if n.allowlisting() && n.srv != nil {
 		for _, i := range names {
 			if k, err := ident.ParsePub(i.ClientPub); err == nil {
 				n.srv.AddAllowedClient(k)

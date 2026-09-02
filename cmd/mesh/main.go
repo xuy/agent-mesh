@@ -21,6 +21,7 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh ask <peer> <question>  ask a peer, wait for its answer
   mesh send <peer> <message>  tell a peer something, do not wait
   mesh inbox                  what has been said to you
+  mesh wait                   block until a peer says something (run in background)
   mesh waiting                questions addressed to you, awaiting your answer
   mesh reply <id> <answer>    answer one of them
   mesh ping <peer>            is a peer reachable, and how
@@ -64,6 +65,8 @@ func main() {
 		err = cmdSend(args)
 	case "inbox":
 		err = cmdInbox(args)
+	case "wait":
+		err = cmdWait(args)
 	case "waiting":
 		err = cmdWaiting(args)
 	case "reply":
