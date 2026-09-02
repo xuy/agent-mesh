@@ -34,6 +34,7 @@ func IdentityPath(n string) string { return filepath.Join(NodeDir(n), "node.key"
 func NodePath(n string) string     { return filepath.Join(NodeDir(n), "node.json") }
 func RosterPath(n string) string   { return filepath.Join(NodeDir(n), "roster.json") }
 func InboxPath(n string) string    { return filepath.Join(NodeDir(n), "inbox.jsonl") }
+func SpoolDir(n string) string     { return filepath.Join(NodeDir(n), "outbox") }
 func LogPath(n string) string      { return filepath.Join(NodeDir(n), "daemon.log") }
 func PeersPath(n string) string    { return filepath.Join(NodeDir(n), "peers.json") }
 func AuditPath(n string) string    { return filepath.Join(NodeDir(n), "audit.jsonl") }

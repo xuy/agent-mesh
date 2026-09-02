@@ -9,6 +9,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -22,6 +23,7 @@ import (
 	"github.com/xuy/agent-mesh/internal/hub"
 	"github.com/xuy/agent-mesh/internal/ident"
 	"github.com/xuy/agent-mesh/internal/policy"
+	"github.com/xuy/agent-mesh/internal/spool"
 	"github.com/xuy/agent-mesh/internal/wire"
 	"tailscale.com/tailcfg"
 )
@@ -71,6 +73,12 @@ type Node struct {
 	hubUp   bool
 	hubConn net.Conn // the live control-plane connection, closed on shutdown
 	started time.Time
+
+	// spool holds tells for peers that are not reachable, so a message survives
+	// the restart that is the usual reason a peer is missing.
+	spool    *spool.Spool
+	flushMu  sync.Mutex
+	flushing map[string]bool
 
 	inboxMu sync.Mutex
 	closed  chan struct{}
@@ -159,7 +167,126 @@ func New(cfg config.Node, m config.Mesh, id *ident.Identity, logf func(string, .
 		pol, _ = policy.Load("", openByDefault, cfg.RatePerMinute)
 	}
 	n.policy = pol
+
+	// A node with nowhere to spool still works; it just fails a tell to an
+	// absent peer the way it always did, which is a worse outcome than
+	// queueing but a better one than refusing to start.
+	if cfg.Name != "" {
+		sp, err := spool.Open(config.SpoolDir(cfg.Name), 0)
+		if err != nil {
+			logf("opening the outbox: %v (messages to absent peers will fail rather than queue)", err)
+		} else {
+			n.spool = sp
+		}
+	}
 	return n
+}
+
+// Outbox reports what is waiting for each peer, so `mesh outbox` can show it.
+func (n *Node) Outbox() (map[string][]spool.Entry, error) {
+	if n.spool == nil {
+		return nil, nil
+	}
+	peers, err := n.spool.Peers()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]spool.Entry{}
+	for _, p := range peers {
+		q, err := n.spool.Pending(p)
+		if err != nil {
+			return nil, err
+		}
+		if len(q) > 0 {
+			out[p] = q
+		}
+	}
+	return out, nil
+}
+
+// retryQueued drains the outbox for peers that are up, on a slow timer.
+//
+// The roster is the fast path and covers a peer coming back. This covers the
+// case it cannot: a message queued because the tunnel failed while the peer was
+// already online has no transition coming, so without a timer it would wait for
+// a roster change that may never happen. A minute is chosen to be slow enough
+// to be free and fast enough that nobody watches an outbox wondering.
+func (n *Node) retryQueued() {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-n.closed:
+			return
+		case <-t.C:
+			if n.spool == nil {
+				continue
+			}
+			peers, err := n.spool.Peers()
+			if err != nil {
+				continue
+			}
+			for _, p := range peers {
+				if i, ok := n.peer(p); ok && i.Online {
+					n.flushSpool(p)
+				}
+			}
+		}
+	}
+}
+
+// flushSpool delivers what is queued for a peer that has just come back.
+//
+// It runs off the roster update rather than on a timer: the roster is the only
+// thing that actually knows a peer returned, and a timer would either be slow
+// or spend the mesh's time asking about peers that are still gone.
+func (n *Node) flushSpool(peer string) {
+	if n.spool == nil {
+		return
+	}
+	// One flush per peer at a time. Roster updates and the retry loop both
+	// trigger this, and two of them interleaving would deliver out of order.
+	n.flushMu.Lock()
+	if n.flushing == nil {
+		n.flushing = map[string]bool{}
+	}
+	if n.flushing[peer] {
+		n.flushMu.Unlock()
+		return
+	}
+	n.flushing[peer] = true
+	n.flushMu.Unlock()
+	defer func() {
+		n.flushMu.Lock()
+		delete(n.flushing, peer)
+		n.flushMu.Unlock()
+	}()
+
+	q, err := n.spool.Pending(peer)
+	if err != nil || len(q) == 0 {
+		return
+	}
+	// Do not dial a peer the roster says is down. Startup restores the cached
+	// roster before the coordinator has said who is actually up, so without
+	// this every offline peer with a queue costs a full dial timeout for
+	// nothing -- measured at two minutes each.
+	if i, ok := n.peer(peer); !ok || !i.Online {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	sent, err := n.spool.Flush(peer, func(env wire.Envelope) error {
+		// The envelope is delivered as it was written -- same ID, so a
+		// redelivery after a crash is a duplicate the receiver can drop, and
+		// same TS, so the receiver can see it was delayed rather than late.
+		return n.deliverTell(ctx, peer, env, nil)
+	})
+	if sent > 0 {
+		n.logf("delivered %d queued message(s) to %s", sent, peer)
+	}
+	if err != nil {
+		n.logf("%d message(s) still waiting for %s: %v", len(q)-sent, peer, err)
+	}
 }
 
 // Adapter reports how this node answers questions.
@@ -220,6 +347,7 @@ func (n *Node) Start() error {
 	}
 	go n.registrar()
 	go n.watchRelay()
+	go n.retryQueued()
 	return nil
 }
 
@@ -632,12 +760,91 @@ func (n *Node) AskWithFiles(ctx context.Context, to, body, thread string, files 
 }
 
 // Tell delivers a message without waiting for an answer.
-func (n *Node) Tell(ctx context.Context, to, body, thread string) error {
+func (n *Node) Tell(ctx context.Context, to, body, thread string) (bool, error) {
 	return n.TellWithFiles(ctx, to, body, thread, nil)
 }
 
-// TellWithFiles is Tell with attachments.
-func (n *Node) TellWithFiles(ctx context.Context, to, body, thread string, files []string) error {
+// refusedError is a refusal the peer produced deliberately -- blocked, not
+// permitted, malformed. It is never queued: retrying it would mean waiting for
+// a peer to change its mind, which is not what an outbox is for.
+type refusedError struct{ err error }
+
+func (e refusedError) Error() string { return e.err.Error() }
+func (e refusedError) Unwrap() error { return e.err }
+
+// TellWithFiles is Tell with attachments. It reports whether the message was
+// queued rather than delivered.
+//
+// A tell to a peer that is not reachable is spooled instead of failing, because
+// the usual reason a peer is missing is that it restarted a moment ago and
+// losing the message is the worst available outcome. Two things are still
+// refused rather than queued: a name that is not on the mesh at all, since
+// queueing for it would mean waiting for a peer that was never coming, and a
+// refusal the peer sent on purpose.
+//
+// Attachments are not spooled yet. Their bytes stream after the envelope rather
+// than living in it, so queueing one means keeping a copy of the file and
+// deciding what happens when it changes underneath -- worth doing, not worth
+// guessing at. Until then a tell carrying files fails fast and says why.
+func (n *Node) TellWithFiles(ctx context.Context, to, body, thread string, files []string) (bool, error) {
+	attached, err := describeFiles(files)
+	if err != nil {
+		return false, err
+	}
+	req := wire.Envelope{ID: wire.NewID(), From: n.cfg.Name, To: to, Kind: wire.KindTell, Thread: thread, Body: body, TS: time.Now().UTC(), Files: stripPaths(attached)}
+
+	info, known := n.peer(to)
+	offline := known && !info.Online
+
+	// A peer the roster shows as down is queued without dialling it: the dial
+	// would spend the caller's whole deadline discovering what we already know.
+	if offline && n.canQueue(to, attached) {
+		return true, n.queue(to, req, spool.ReasonOffline)
+	}
+
+	if err := n.deliverTell(ctx, to, req, attached); err != nil {
+		var refused refusedError
+		if errors.As(err, &refused) || !known || !n.canQueue(to, attached) {
+			return false, err
+		}
+		reason := spool.ReasonUnreachable
+		if offline {
+			reason = spool.ReasonOffline
+		}
+		if qerr := n.queue(to, req, reason); qerr != nil {
+			// Report the original failure; the queue error explains why it
+			// could not be softened.
+			return false, fmt.Errorf("%w (and it could not be queued: %v)", err, qerr)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// canQueue reports whether a message for this peer may be spooled at all.
+func (n *Node) canQueue(to string, attached []wire.File) bool {
+	return n.spool != nil && len(attached) == 0 && to != n.cfg.Name
+}
+
+func (n *Node) queue(to string, req wire.Envelope, reason string) error {
+	if err := n.spool.Add(to, req, reason); err != nil {
+		return err
+	}
+	n.appendInbox(req)
+	n.logf("queued a message for %s (%s); it goes when the peer is back", to, reason)
+	return nil
+}
+
+// peer returns what the roster currently says about a name.
+func (n *Node) peer(name string) (ident.Info, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	i, ok := n.roster[name]
+	return i, ok
+}
+
+// deliverTell is the wire half of a tell, with no queueing in it.
+func (n *Node) deliverTell(ctx context.Context, to string, req wire.Envelope, attached []wire.File) error {
 	cl, _, err := n.client(to)
 	if err != nil {
 		return err
@@ -651,11 +858,6 @@ func (n *Node) TellWithFiles(ctx context.Context, to, body, thread string, files
 	if d, ok := ctx.Deadline(); ok {
 		wc.SetDeadline(d)
 	}
-	attached, err := describeFiles(files)
-	if err != nil {
-		return err
-	}
-	req := wire.Envelope{ID: wire.NewID(), From: n.cfg.Name, To: to, Kind: wire.KindTell, Thread: thread, Body: body, TS: time.Now().UTC(), Files: stripPaths(attached)}
 	if err := wc.Send(req); err != nil {
 		return err
 	}
@@ -668,7 +870,7 @@ func (n *Node) TellWithFiles(ctx context.Context, to, body, thread string, files
 		return fmt.Errorf("%s did not acknowledge: %w", to, err)
 	}
 	if e.Kind == wire.KindError {
-		return fmt.Errorf("%s: %s", to, e.Body)
+		return refusedError{fmt.Errorf("%s: %s", to, e.Body)}
 	}
 	return nil
 }
@@ -788,10 +990,17 @@ func (n *Node) allowlisting() bool { return n.coord == nil }
 func (n *Node) applyRoster(rs []ident.Info) {
 	n.mu.Lock()
 	next := map[string]ident.Info{}
+	var returned []string
 	for _, i := range rs {
 		if i.Name == n.cfg.Name {
 			continue
 		}
+		// Every online peer is a candidate to drain, not only one that just
+		// came back. A message queued as "unreachable" was queued while the
+		// peer was already online, so a transition that never happens would
+		// leave it waiting forever -- a queue that does not drain is the
+		// silent loss this replaces, wearing a different hat.
+		returned = append(returned, i.Name)
 		i.Online = true
 		next[i.Name] = i
 	}
@@ -845,6 +1054,12 @@ func (n *Node) applyRoster(rs []ident.Info) {
 		}
 	}
 	n.saveRoster(names)
+
+	// Off the caller's goroutine: this is the coordinator's roster update, and
+	// a slow peer must not hold up applying the rest of the mesh.
+	for _, name := range returned {
+		go n.flushSpool(name)
+	}
 }
 
 // saveRoster caches the roster so loadRoster can restore it on a start with no

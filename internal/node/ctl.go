@@ -11,6 +11,7 @@ import (
 	"github.com/xuy/agent-mesh/internal/adapter"
 	"github.com/xuy/agent-mesh/internal/ident"
 	"github.com/xuy/agent-mesh/internal/policy"
+	"github.com/xuy/agent-mesh/internal/spool"
 	"github.com/xuy/agent-mesh/internal/wire"
 )
 
@@ -30,16 +31,17 @@ type CtlReq struct {
 // CtlResp is one frame of the daemon's answer. A streaming command sends any
 // number of "chunk" frames and exactly one terminal "ok" or "error" frame.
 type CtlResp struct {
-	Kind    string             `json:"kind"`
-	Error   string             `json:"error,omitempty"`
-	Body    string             `json:"body,omitempty"`
-	Peers   []ident.Info       `json:"peers,omitempty"`
-	Msgs    []wire.Envelope    `json:"msgs,omitempty"`
-	Status  *Status            `json:"status,omitempty"`
-	Ping    *PingResult        `json:"ping,omitempty"`
-	Waiting []adapter.Question `json:"waiting,omitempty"`
-	Trust   []*policy.Peer     `json:"trust,omitempty"`
-	Audit   []auditEntry       `json:"audit,omitempty"`
+	Kind    string                   `json:"kind"`
+	Error   string                   `json:"error,omitempty"`
+	Body    string                   `json:"body,omitempty"`
+	Peers   []ident.Info             `json:"peers,omitempty"`
+	Msgs    []wire.Envelope          `json:"msgs,omitempty"`
+	Status  *Status                  `json:"status,omitempty"`
+	Ping    *PingResult              `json:"ping,omitempty"`
+	Waiting []adapter.Question       `json:"waiting,omitempty"`
+	Trust   []*policy.Peer           `json:"trust,omitempty"`
+	Audit   []auditEntry             `json:"audit,omitempty"`
+	Outbox  map[string][]spool.Entry `json:"outbox,omitempty"`
 }
 
 // Status is a snapshot of the daemon, for `mesh status` and `mesh doctor`.
@@ -141,6 +143,13 @@ func (n *Node) serveCtlConn(c net.Conn) {
 		enc.Encode(CtlResp{Kind: "ok", Peers: n.Peers()})
 	case "inbox":
 		enc.Encode(CtlResp{Kind: "ok", Msgs: n.Inbox(req.Limit, req.Incoming)})
+	case "outbox":
+		box, err := n.Outbox()
+		if err != nil {
+			fail(err)
+			return
+		}
+		enc.Encode(CtlResp{Kind: "ok", Outbox: box})
 	case "wait":
 		// Anything already parked counts as having arrived: a peer blocked on
 		// us right now is more urgent than the next message.
@@ -189,8 +198,15 @@ func (n *Node) serveCtlConn(c net.Conn) {
 		}
 		enc.Encode(CtlResp{Kind: "ok", Body: "answered " + req.ID})
 	case "tell":
-		if err := n.TellWithFiles(ctx, req.To, req.Body, req.Thread, req.Files); err != nil {
+		queued, err := n.TellWithFiles(ctx, req.To, req.Body, req.Thread, req.Files)
+		if err != nil {
 			fail(err)
+			return
+		}
+		if queued {
+			// Said plainly rather than reported as success: the message has not
+			// arrived, and the sender should know that before acting as if it had.
+			enc.Encode(CtlResp{Kind: "ok", Body: "queued for " + req.To + " -- it is not reachable; `mesh outbox` shows what is waiting"})
 			return
 		}
 		enc.Encode(CtlResp{Kind: "ok", Body: "delivered to " + req.To})

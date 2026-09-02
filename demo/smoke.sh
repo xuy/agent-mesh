@@ -101,5 +101,40 @@ echo "being reachable without polling"
 expect "wait returns on a message"  "woke you"    "$(a wait --timeout 45s)"
 
 echo
+echo "a peer that is not there"
+# The queue only matters across a real absence, so beta is actually stopped
+# rather than simulated -- the failure this replaces is a message lost to a peer
+# that restarted a second ago.
+b down >/dev/null 2>&1 || true
+# Wait for alpha to SEE beta go, not merely for beta to stop. Presence comes
+# from the coordinator noticing the control connection close, and a fixed sleep
+# here delivered the message to a beta that was still up -- the first version of
+# this test passed for the wrong reason.
+i=0
+while [ "$i" -lt 30 ]; do
+	case "$(a peers)" in
+	*beta*offline*) break ;;
+	esac
+	sleep 2
+	i=$((i + 1))
+done
+expect "a tell to a stopped peer is queued"  "queued for beta"           "$(a send beta 'held while you were away' 2>&1)"
+expect "the outbox says what is waiting"     "held while you were away"  "$(a outbox)"
+expect "and why"                             "offline"                   "$(a outbox)"
+
+b up >/dev/null 2>&1
+# Delivery rides the roster update, which follows beta re-registering.
+i=0
+while [ "$i" -lt 30 ]; do
+	case "$(a outbox)" in
+	*"nothing waiting"*) break ;;
+	esac
+	sleep 2
+	i=$((i + 1))
+done
+expect "it drains when the peer comes back"  "nothing waiting"           "$(a outbox)"
+expect "and the message actually arrived"    "held while you were away"  "$(b inbox)"
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
