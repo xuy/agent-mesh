@@ -6,53 +6,70 @@ actually lands.
 
 ---
 
-## 0. The thesis
+## 0. Two theses, and the second one is the important one
 
 **The last mile was already solved. The missing hop was machine to machine.**
 
-Desktop chat apps can already call a tool. What they could not do is reach a
-program running on a computer somewhere else, so every product that wanted to
+Desktop chat apps can already run something locally. What they could not do is
+reach a program on a computer somewhere else, so every product that wanted to
 offer it built the same thing: a hosted service, a tunnel down to an agent on
-your machine, and your data through both. That architecture is not a choice
-anyone made because it was good; it is what you build when peer-to-peer is
-hard.
+your machine, and your data through both. Nobody chose that because it was
+good; it is what you build when peer-to-peer is hard. tailcat makes it not
+hard, so the middle disappears -- not a smaller middle, or a more private
+middle. None.
 
-tailcat makes it not hard. So the shape becomes:
+**And: calling a service is not the same shape as dispatching work.**
 
-    you, in a chat  ->  a tool on your own machine  ->  encrypted p2p  ->  the machine that has the thing
+MCP is a protocol for a model to call something. Its unit is a tool call:
+request, response, synchronous, nothing carried between calls. That is the
+right shape for Notion, Gmail, a calendar -- services that exist to answer
+questions and change records. It is why almost every MCP server is an API
+wrapper.
 
-with no service in the middle. Not a smaller middle, or a more private middle.
-None.
+Handing work to an agent is a different shape entirely:
 
-That is the whole product, and everything below is what stands between it being
-technically true today and being something a stranger would install.
+| calling a service | dispatching work |
+|---|---|
+| milliseconds | minutes to hours |
+| the caller knows what to ask for | the caller states intent, the other end decides how |
+| a wrong call returns an error | an ambiguous task needs a *question asked back* |
+| returns a value | produces artifacts, and progress worth watching |
+| stateless | a lifecycle you can inspect, resume and cancel |
+| the far side is always up | the far side may be asleep, busy, or restarting |
+
+You can carry the second thing over the first -- we do -- but the protocol does
+not express it. What you get is a tool call that either blocks for ten minutes
+or hands back a handle you have to poll, with all the semantics living in a
+prompt rather than in the wire. That is exactly why "@ my bot from a chat app"
+feels thin today: people are using a service-calling protocol to do dispatch.
+
+So the product is not an MCP server for your machines. **It is a dispatch layer
+between agents, which projects an MCP surface for clients that can only speak
+MCP.** Where a local harness exists -- and as of 2026 that is most of them --
+the native path is better, because it gets the whole task model instead of a
+flattened projection of it.
 
 ## 1. What is actually true today, per surface
 
 Verified, September 2026, because the plan depends on it:
 
-| surface | local tool servers | agent-mesh today |
+| surface | can run something locally | reaches the mesh by |
 |---|---|---|
-| **Claude Desktop** | yes, local stdio | **works now** — `mesh mcp` |
-| Claude Code, Cursor, opencode | yes, local stdio | works now |
-| **ChatGPT Desktop** | **no** | needs a public door (§5) |
+| **Claude Desktop** | yes | local MCP today; native once it has a task client |
+| **ChatGPT Desktop** | yes — Codex harness, merged into the desktop app | the harness runs `mesh` directly |
+| Claude Code, Codex CLI, opencode, Cursor | yes | skill + CLI, working today |
+| OpenClaw and other resident agents | yes | webhook delivery, working today |
+| a thin client with only remote connectors | no | a door you own (§5) |
 
-ChatGPT's connectors are remote HTTP/SSE servers that OpenAI's own
-infrastructure connects to. A local stdio server is not an option, and
-`localhost` is not reachable from their side. This is ChatGPT's architecture,
-not a gap in ours, and no amount of peer-to-peer removes it.
+The important line is the second one. OpenAI merged Codex into the ChatGPT
+desktop app, so it now has a local harness that can use local files and
+programs. That removes the constraint this section previously described -- an
+earlier draft said ChatGPT could only reach remote HTTP connectors, which was
+true of the connector system and is no longer the whole picture. **Both major
+desktop surfaces can now run `mesh` on the machine the person is sitting at.**
 
-So the honest version of the pitch splits:
-
-- **On Claude Desktop the middle really does disappear**, today, with no
-  infrastructure at all. That is the demo.
-- **On ChatGPT one public endpoint is unavoidable** — but it can be *yours*, it
-  can be a dumb door rather than a service, and it does not have to be anywhere
-  near the machines that do the work. That is still a categorically better
-  trade than a vendor's hosted agent, and §5 says how.
-
-Getting this the wrong way round in a launch post would be the expensive kind
-of wrong, so it is written down here first.
+Which makes the public-door design a fallback for genuinely thin clients rather
+than the ChatGPT story, and moves §5 to the bottom of the list where it belongs.
 
 ## 2. What "amazing" means, concretely
 
@@ -81,20 +98,31 @@ with each, then say what it did.
 Small, and the highest-leverage item on this list: everything else is worth
 nothing to someone who never got it working.
 
-### D2. Delegation is asynchronous
+### D2. A task is a first-class thing, not a long tool call
 
-A tool call in a chat has a short timeout and a person watching it. Real work —
-a build, a scan, a cleanup — takes minutes. Blocking is wrong on both counts.
+This is the piece that makes the difference between a message pipe with a nice
+CLI and something you would actually hand work to.
 
-Split it, taking the shape from A2A rather than inventing one:
+Today an `ask` is a connection held open until an answer comes back. That is
+fine for a question and wrong for work: it dies with the connection, it cannot
+be inspected, it cannot be cancelled, it cannot ask anything back, and it
+occupies a socket for ten minutes to deliver one paragraph.
 
-- `mesh_delegate(peer, task)` returns a task id immediately.
-- `mesh_check(task_id)` returns state, progress so far, and the result when
-  there is one.
-- States: `working`, `input-required`, `done`, `failed`.
+A task is durable state on both sides:
 
-This also fixes something v1 has wrong for every caller, not just chat: an
-`ask` that takes ten minutes currently occupies a connection for ten minutes.
+    id, from, to, intent, thread
+    state:     accepted -> working -> (input-required <-> working) -> done | failed | cancelled
+    progress:  a stream you can attach to, late, more than once
+    artifacts: files it produced
+    cancel:    because a person changes their mind
+
+Two properties matter more than the rest. **It survives a disconnection**, so
+you can close your laptop and ask later how it went. And **it survives a daemon
+restart**, because a task is state, not a socket -- which is the same
+realisation behind the offline spool, and they should share a store.
+
+`mesh ask` stays exactly as it is. It is the cheap path, it is right for a
+question, and most traffic will keep using it. Tasks are for work.
 
 ### D3. The far agent can ask a question back
 
@@ -106,6 +134,18 @@ Without it, every ambiguous task fails or guesses. With it, an agent that is
 unsure behaves the way a competent colleague does.
 
 This is the single feature I would protect if the rest were cut.
+
+### D3b. Native beats projected
+
+Every harness that can run a program should talk to the mesh directly rather
+than through a tool-call shim, because the shim is where the task model gets
+flattened back into request/response.
+
+`mesh connect` should therefore install the *best available* integration per
+surface rather than the same one everywhere: a skill where skills exist, an MCP
+server where that is the only option, a config entry where the harness wants
+one. What a surface gets should be decided by what it can do, not by what is
+easiest to write once.
 
 ### D4. The model picks the machine
 
@@ -147,20 +187,24 @@ Three additions, none optional before anyone else installs this:
 
 ## 4. Sequencing
 
-D1, D2 and D3 are the product. D4 and D5 make it good. The safety items in §3
-gate telling anyone about it.
+The task model is the spine; everything else hangs off it.
 
-1. **D1 `mesh connect`** — half a day, and nothing else matters without it.
-2. **D2 async tasks** — the largest piece, and it improves v1 as well.
-3. **D3 `input-required`** — small on top of D2, and it is the magic.
+1. **D2 the task model** — durable, resumable, cancellable, with progress. The
+   largest piece and the one that changes what this project is. Shares a store
+   with the offline spool, so it should land after or alongside that.
+2. **D3 `input-required`** — small once D2 exists, and it is the magic.
+3. **D1 `mesh connect`** — per-surface, native where possible. Cheap, and
+   nothing else reaches anyone without it.
 4. **§3 safety** — before any public instruction to install this.
-5. **D4 capability cards**, **D5 artifacts**.
-6. **§5 the ChatGPT door.**
+5. **D5 artifacts**, then **D4 capability cards**.
+6. **§5 the door**, only if someone actually needs a thin client.
 
-## 5. The ChatGPT door
+## 5. A door for thin clients
 
-ChatGPT needs an HTTPS endpoint its servers can reach. The design constraint is
-that the endpoint must be as close to nothing as possible:
+Some clients can only reach a remote HTTPS endpoint -- a connector system with
+no local harness, a phone, a browser tab. They are no longer the main case, but
+where one matters, the design constraint is that the endpoint must be as close
+to nothing as possible:
 
 `mesh mcp --http --listen :443` makes any mesh node serve the same tools over
 HTTP/SSE instead of stdio, authenticated with a bearer token. Then either:
@@ -175,8 +219,10 @@ does the reaching. Compared with a vendor's hosted agent this removes the third
 party and the requirement that the vendor support your machine, which is most
 of the point.
 
-What it does **not** do is remove the public endpoint. Anyone who says
-otherwise about ChatGPT is selling something.
+What it does **not** do is remove the public endpoint for a client that can
+only speak to one. That is a property of the client, and no amount of
+peer-to-peer changes it -- which is why this is the last item on the list and
+not the first.
 
 ## 6. What we still do not build
 
