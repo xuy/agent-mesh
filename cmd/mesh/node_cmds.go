@@ -222,8 +222,11 @@ func joinSummary(nm, mesh string) error {
 		fmt.Println("\nYou answer by hand: `mesh waiting` shows questions, `mesh reply <id> <answer>` answers one.")
 	case "exec":
 		fmt.Println("\nYou answer automatically by running your configured command.")
+		fmt.Println("The mesh's coordinator may ask you to; anyone else needs `mesh allow <peer>`")
+		fmt.Println("(or `mesh allow --all` if every node on this mesh is yours).")
 	case "webhook":
 		fmt.Println("\nQuestions are delivered to your resident agent's local API.")
+		fmt.Println("The mesh's coordinator may ask you to; anyone else needs `mesh allow <peer>`.")
 		fmt.Println("If it only acknowledges them, answer with `mesh reply <id> <answer>`.")
 	case "notify":
 		fmt.Println("\nQuestions park for you and run your notify command; answer with `mesh reply <id> <answer>`.")

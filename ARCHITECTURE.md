@@ -801,3 +801,31 @@ understand.**
 
 All of it is tested against a sandboxed home, including that an unparseable
 file comes back byte-identical.
+
+## 24. The quickstart did not work
+
+`demo/smoke.sh` exercises every claim the README makes, on a throwaway mesh
+with real tunnels and real relays, because the things that break are the things
+only a real tunnel exercises and none of them show up in `go test`.
+
+The first run failed six of sixteen, and the most useful failure was the
+README's own quickstart. It tells a reader to start an exec node and then ask
+it something — and an exec node starts closed, so the answer was a refusal.
+Correct security, and a product that does not work out of the box.
+
+The fix is a rule rather than a weakening: **the mesh's coordinator starts
+trusted, everyone else does not.** Joining a mesh is how a node says yes to the
+node whose mesh it is. Someone had to hand over the join key and someone had to
+accept it, and requiring a second per-pair approval afterwards is friction that
+buys nothing — a stranger cannot become the coordinator without already holding
+the address everyone dials. Being on a mesh together is a weaker relationship
+than being the node whose mesh it is, and only the second one is implied
+consent.
+
+`mesh allow --all` covers the honest common case of a person whose nodes are
+all their own. It grants only to peers already known, so it is not a door left
+open for whoever turns up next.
+
+Two of the six failures were the test being wrong rather than the program,
+which is worth saying: a smoke test that has never been wrong has probably
+never been strict.

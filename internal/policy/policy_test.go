@@ -162,3 +162,49 @@ func TestFingerprintIsReadable(t *testing.T) {
 		t.Error("different keys share a fingerprint")
 	}
 }
+
+// Joining a mesh is how a node says yes to the node whose mesh it is. Making
+// the operator approve that a second time, per pair, is friction that buys
+// nothing -- a stranger cannot become the coordinator without already holding
+// the address everyone dials.
+func TestSeedTrustsAPeerOnFirstContactOnly(t *testing.T) {
+	s := store(t, false)
+	if err := s.Seed("coordinator", "keyA", true); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Check("coordinator", "keyA", true); !d.Allowed {
+		t.Fatalf("a seeded peer was refused: %s", d.Reason)
+	}
+	// Seeding must never overrule a decision someone already made.
+	if err := s.SetMayAsk("coordinator", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Seed("coordinator", "keyA", true); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Check("coordinator", "keyA", true); d.Allowed {
+		t.Fatal("seeding overruled an explicit deny")
+	}
+}
+
+func TestAllowAllKnownOpensOnlyWhatIsAlreadyKnown(t *testing.T) {
+	s := store(t, false)
+	s.Check("mac", "k1", false)
+	s.Check("pi", "k2", false)
+	s.Check("stranger", "k3", false)
+	s.SetBlocked("stranger", true)
+
+	if n := s.AllowAllKnown(); n != 2 {
+		t.Fatalf("allowed %d peers, want the 2 that are not blocked", n)
+	}
+	if d := s.Check("mac", "k1", true); !d.Allowed {
+		t.Error("a known peer was still refused")
+	}
+	if d := s.Check("stranger", "k3", true); d.Allowed {
+		t.Error("a blocked peer was allowed by a bulk grant")
+	}
+	// And it must not open the door to whoever turns up next.
+	if d := s.Check("newcomer", "k4", true); d.Allowed {
+		t.Error("a peer that arrived after the grant was allowed by it")
+	}
+}

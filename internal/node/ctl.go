@@ -112,6 +112,13 @@ func (n *Node) serveCtlConn(c net.Conn) {
 		var err error
 		switch req.Op {
 		case "allow":
+			if req.To == "--all" {
+				count := n.policy.AllowAllKnown()
+				enc.Encode(CtlResp{Kind: "ok",
+					Body:  fmt.Sprintf("allowed %d peer(s) to ask this node to work", count),
+					Trust: n.policy.All()})
+				return
+			}
 			err = n.policy.SetMayAsk(req.To, true)
 		case "deny":
 			err = n.policy.SetMayAsk(req.To, false)

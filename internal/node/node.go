@@ -687,6 +687,21 @@ func (n *Node) Ping(ctx context.Context, to string) (PingResult, error) {
 
 // ---------- roster ----------
 
+// isCoordinator reports whether a roster entry is the node whose address this
+// mesh is joined through. No field says so -- an invite deliberately does not
+// carry the coordinator's name (§14) -- but the mesh's address embeds its key,
+// so comparing them answers it exactly.
+func (n *Node) isCoordinator(i ident.Info) bool {
+	if n.mesh.Hub == "" || i.ServerPub == "" {
+		return false
+	}
+	ci, err := tailcat.ParseConnBlob(tailcat.ConnBlob(n.mesh.Hub))
+	if err != nil {
+		return false
+	}
+	return ident.PubText(ci.ServerPublic.NodePublic) == i.ServerPub
+}
+
 // peerKey returns the server key the roster currently advertises for a peer,
 // which is what the policy store pins and compares against.
 func (n *Node) peerKey(name string) string {
@@ -789,6 +804,20 @@ func (n *Node) applyRoster(rs []ident.Info) {
 	// The roster can be applied before the tunnel exists -- a cached roster is
 	// loaded at startup, and tests apply one directly -- so there may be no
 	// server to widen yet. Start installs the allowlist again once it is up.
+	// The mesh's coordinator starts trusted, because joining its mesh is how
+	// this node said yes. Someone had to hand over the join key and someone
+	// had to accept it, and requiring a second, per-pair approval afterwards
+	// is friction that buys nothing: a stranger cannot become the coordinator
+	// without already holding the address everyone dials.
+	//
+	// Every other peer still has to be allowed. Being on a mesh together is
+	// not the same as being the node whose mesh it is.
+	for _, i := range names {
+		if n.isCoordinator(i) {
+			n.policy.Seed(i.Name, i.ServerPub, true)
+		}
+	}
+
 	if n.allowlisting() && n.srv != nil {
 		for _, i := range names {
 			if k, err := ident.ParsePub(i.ClientPub); err == nil {

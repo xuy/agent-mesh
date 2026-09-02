@@ -208,6 +208,42 @@ func (s *Store) SetMayAsk(name string, may bool) error {
 	return s.update(name, func(p *Peer) { p.MayAsk = may })
 }
 
+// Seed creates an entry for a peer that should start trusted, if this node has
+// not met it yet. It never changes a decision already made -- seeding is for
+// the first contact, not a way to overrule someone.
+func (s *Store) Seed(name, key string, mayAsk bool) error {
+	s.mu.Lock()
+	if _, known := s.peers[name]; known {
+		s.mu.Unlock()
+		return nil
+	}
+	s.peers[name] = &Peer{
+		Name: name, Key: key, MayAsk: mayAsk, FirstSeen: time.Now().UTC(),
+	}
+	err := s.saveLocked()
+	s.mu.Unlock()
+	return err
+}
+
+// AllowAllKnown grants every peer this node has met the authority to ask it to
+// work. It is the "these are all my machines" button, and it applies only to
+// peers already known -- it does not open the door to whoever turns up next.
+func (s *Store) AllowAllKnown() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, p := range s.peers {
+		if !p.MayAsk && !p.Blocked {
+			p.MayAsk = true
+			n++
+		}
+	}
+	if n > 0 {
+		s.saveLocked()
+	}
+	return n
+}
+
 // SetVerified records that a person compared fingerprints out of band.
 func (s *Store) SetVerified(name, key string) error {
 	return s.update(name, func(p *Peer) {

@@ -157,11 +157,15 @@ another machine reaches a model that can run commands. So the two are separate.
 
 **Telling is always allowed. Asking depends on what the node does with a
 question.** A mailbox node starts open — a human reads it. A node that
-*executes* starts closed:
+*executes* starts closed to everyone except the mesh's coordinator, because
+joining its mesh is how the node said yes in the first place. Anyone else:
 
     $ mesh ask builder "run the tests"
     mesh: builder: you may send messages to this node but not ask it to do
     work. Its operator can allow that with `mesh allow mac`
+
+    $ mesh allow mac          # on the builder — or `mesh allow --all`
+                              # if every node on the mesh is yours
 
 A peer's key is pinned on first contact, and a different key under a name
 that is already taken is refused rather than accepted — that is how a name gets
