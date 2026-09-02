@@ -529,3 +529,49 @@ check now happens before anything starts, in both modes.
 The same install path also stopped the running daemon without saying so, which
 from the outside is indistinguishable from a crash. It says so now, and waits
 for the control socket to be released before handing over.
+
+## 18. Who is allowed to do what
+
+Being on the mesh lets a peer talk to a node. Whether it can make that node
+*work* is a separate question, and conflating the two is how an agent mesh
+becomes a remote code execution service with extra steps.
+
+Two defences, both in `internal/policy`, both consulted per message rather than
+per connection -- so a decision made a moment ago binds the next request on a
+tunnel the peer already has.
+
+**Identity.** A peer's key is pinned on first contact. A different key arriving
+under a name that is already taken is refused and the original key is kept:
+accepting silently is exactly how a name gets stolen, and from here an
+impersonation and a rebuilt node are indistinguishable, so a person has to say
+which. `mesh forget <peer>` is that decision, made explicitly. `mesh id` prints
+a short grouped fingerprint to read across a desk, and `mesh verify` records
+that someone did -- unverified peers are still trusted, but the roster says
+plainly that they are trusted because they turned up first.
+
+**Authority.** Telling is always allowed: a message that lands in an inbox costs
+nothing and commits no one. Asking is what spends tokens and runs commands, and
+whether a stranger may do it depends on what the node does with a question. A
+mailbox node's work is showing a human a question, so it starts open -- the
+human is the check. An `exec` or `webhook` node's work is running a command or
+waking a live agent, so it starts closed. That default is derived from the
+delivery mode rather than configured, because the blast radius is the thing
+that actually differs and asking an operator to notice that themselves is
+asking them to get it wrong.
+
+A refusal names the command that would grant what was refused, so the peer can
+act instead of guessing.
+
+Everything a peer asks is recorded, including what was refused -- `mesh log`.
+Refusals never reach the inbox, so without a separate record the interesting
+half of the history would be the invisible half.
+
+Verified end to end on a live mesh: an exec node accepted a `tell` from an
+unvouched peer and refused its `ask`; `mesh allow` opened it; `mesh block` shut
+it again on the very next message with no restart, which retires the "peer
+removal needs a daemon restart" limitation the README had carried since the
+first round. tailcat still cannot revoke an allowlisted key, so a blocked peer
+can open a tunnel -- it simply cannot say anything through it.
+
+What is not built: rate limiting. A peer that is allowed to ask can ask as often
+as it likes, and one agent in a loop can still spend another's tokens.

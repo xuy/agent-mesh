@@ -10,6 +10,7 @@ import (
 
 	"github.com/xuy/agent-mesh/internal/adapter"
 	"github.com/xuy/agent-mesh/internal/ident"
+	"github.com/xuy/agent-mesh/internal/policy"
 	"github.com/xuy/agent-mesh/internal/wire"
 )
 
@@ -36,6 +37,8 @@ type CtlResp struct {
 	Status  *Status            `json:"status,omitempty"`
 	Ping    *PingResult        `json:"ping,omitempty"`
 	Waiting []adapter.Question `json:"waiting,omitempty"`
+	Trust   []*policy.Peer     `json:"trust,omitempty"`
+	Audit   []auditEntry       `json:"audit,omitempty"`
 }
 
 // Status is a snapshot of the daemon, for `mesh status` and `mesh doctor`.
@@ -50,6 +53,10 @@ type Status struct {
 	Online  int    `json:"online"`
 	Uptime  string `json:"uptime"`
 	PID     int    `json:"pid"`
+
+	// Key is this node's own public key, so `mesh id` can show a fingerprint
+	// for someone to read out to whoever is adding them.
+	Key string `json:"key,omitempty"`
 }
 
 // ServeCtl accepts local CLI connections until the node closes.
@@ -88,6 +95,35 @@ func (n *Node) serveCtlConn(c net.Conn) {
 	switch req.Op {
 	case "status":
 		enc.Encode(CtlResp{Kind: "ok", Status: n.status()})
+	case "trust":
+		enc.Encode(CtlResp{Kind: "ok", Trust: n.policy.All()})
+	case "audit":
+		enc.Encode(CtlResp{Kind: "ok", Audit: n.Audit(req.Limit)})
+	case "allow", "deny", "block", "unblock", "verify", "forget":
+		if req.To == "" {
+			fail(fmt.Errorf("which peer?"))
+			return
+		}
+		var err error
+		switch req.Op {
+		case "allow":
+			err = n.policy.SetMayAsk(req.To, true)
+		case "deny":
+			err = n.policy.SetMayAsk(req.To, false)
+		case "block":
+			err = n.policy.SetBlocked(req.To, true)
+		case "unblock":
+			err = n.policy.SetBlocked(req.To, false)
+		case "verify":
+			err = n.policy.SetVerified(req.To, n.peerKey(req.To))
+		case "forget":
+			err = n.policy.Forget(req.To)
+		}
+		if err != nil {
+			fail(err)
+			return
+		}
+		enc.Encode(CtlResp{Kind: "ok", Body: req.Op + " " + req.To, Trust: n.policy.All()})
 	case "peers":
 		enc.Encode(CtlResp{Kind: "ok", Peers: n.Peers()})
 	case "inbox":
@@ -178,6 +214,7 @@ func (n *Node) status() *Status {
 		blob = string(n.srv.ConnBlob())
 	}
 	return &Status{
+		Key:  ident.PubText(n.id.Server.Public()),
 		Name: n.cfg.Name, Mesh: n.mesh.Name, Agent: n.cfg.Agent,
 		Adapter: n.ad.Kind(), Blob: blob, HubUp: n.HubUp(),
 		Peers: len(peers), Online: online,
