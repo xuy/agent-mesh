@@ -7,7 +7,10 @@ build:
 # other one's commits, and refuses to ship main red. Run once per clone.
 hooks:
 	@git config core.hooksPath .githooks
+	@chmod +x .githooks/* 2>/dev/null || true
 	@echo "hooks on: $$(git config core.hooksPath)"
+	@git config core.hooksPath >/dev/null && [ -x .githooks/pre-push ] \
+		|| { echo "pre-push is not executable -- it would be silently ignored"; exit 1; }
 
 # Replace atomically rather than writing into the existing file: macOS
 # invalidates the code signature of a binary modified in place and kills it on
