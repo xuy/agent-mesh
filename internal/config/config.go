@@ -38,6 +38,7 @@ func LogPath(n string) string      { return filepath.Join(NodeDir(n), "daemon.lo
 func PeersPath(n string) string    { return filepath.Join(NodeDir(n), "peers.json") }
 func AuditPath(n string) string    { return filepath.Join(NodeDir(n), "audit.jsonl") }
 func CursorPath(n string) string   { return filepath.Join(NodeDir(n), "read-cursor") }
+func FilesDir(n string) string     { return filepath.Join(NodeDir(n), "files") }
 func PIDPath(n string) string      { return filepath.Join(NodeDir(n), "daemon.pid") }
 
 // SockPath is the node daemon's local control socket: how the CLI reaches the

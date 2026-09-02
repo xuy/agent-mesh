@@ -275,7 +275,11 @@ func cmdStatus(args []string) error {
 	if !s.HubUp {
 		hub = "DOWN (discovery stalled; existing peers still reachable)"
 	}
-	fmt.Printf("name     %s\nmesh     %s\nagent    %s\nanswers  %s\nhub      %s\npeers    %d (%d online)\nuptime   %s\npid      %d\n",
-		s.Name, s.Mesh, s.Agent, s.Adapter, hub, s.Peers, s.Online, s.Uptime, s.PID)
+	reach := s.Relay
+	if reach == "" {
+		reach = "NONE -- no peer can reach this node right now"
+	}
+	fmt.Printf("name     %s\nmesh     %s\nagent    %s\nanswers  %s\nreachable via %s\nhub      %s\npeers    %d (%d online)\nuptime   %s\npid      %d\n",
+		s.Name, s.Mesh, s.Agent, s.Adapter, reach, hub, s.Peers, s.Online, s.Uptime, s.PID)
 	return nil
 }

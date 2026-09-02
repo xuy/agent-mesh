@@ -57,6 +57,10 @@ type Status struct {
 	// Key is this node's own public key, so `mesh id` can show a fingerprint
 	// for someone to read out to whoever is adding them.
 	Key string `json:"key,omitempty"`
+
+	// Relay is the relay this node is reachable through. Empty means no peer
+	// can open a connection to it, whatever else looks healthy.
+	Relay string `json:"relay,omitempty"`
 }
 
 // ServeCtl accepts local CLI connections until the node closes.
@@ -221,8 +225,9 @@ func (n *Node) status() *Status {
 		blob = string(n.srv.ConnBlob())
 	}
 	return &Status{
-		Key:  ident.PubText(n.id.Server.Public()),
-		Name: n.cfg.Name, Mesh: n.mesh.Name, Agent: n.cfg.Agent,
+		Key:   ident.PubText(n.id.Server.Public()),
+		Relay: n.RelayHome(),
+		Name:  n.cfg.Name, Mesh: n.mesh.Name, Agent: n.cfg.Agent,
 		Adapter: n.ad.Kind(), Blob: blob, HubUp: n.HubUp(),
 		Peers: len(peers), Online: online,
 		Uptime: time.Since(n.started).Round(time.Second).String(), PID: os.Getpid(),

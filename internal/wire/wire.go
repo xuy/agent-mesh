@@ -44,7 +44,27 @@ const (
 	KindDone Kind = "done"
 	// KindError ends the exchange without an answer.
 	KindError Kind = "error"
+	// KindFile carries one chunk of an attached file, after the message that
+	// announced it.
+	KindFile Kind = "file"
 )
+
+// File describes an attachment travelling with a message.
+//
+// Agents produce things that are not sentences -- a patch, a log, a screenshot
+// -- and without a way to send them every application invents base64 in a
+// message body, badly. This is a communication primitive because the file is
+// what is being communicated.
+type File struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	// Sum is the SHA-256 of the contents, so the receiver can tell a truncated
+	// transfer from a complete one rather than trusting a byte count.
+	Sum string `json:"sum,omitempty"`
+	// Path is filled in by the receiver: where the file was written locally.
+	// It is never sent.
+	Path string `json:"path,omitempty"`
+}
 
 // Envelope is one message on the mesh.
 type Envelope struct {
@@ -80,6 +100,20 @@ type Envelope struct {
 	// applications on one mesh cannot collide.
 	Type string          `json:"type,omitempty"`
 	Data json.RawMessage `json:"data,omitempty"`
+
+	// Files announces attachments that follow this message as KindFile
+	// frames, in order.
+	Files []File `json:"files,omitempty"`
+
+	// Chunk carries attachment bytes on a KindFile frame, base64 encoded.
+	// Base64 rather than a binary framing because the whole connection is one
+	// JSON stream, and a second framing beside it is a source of bugs out of
+	// proportion to the third it would save.
+	Chunk []byte `json:"chunk,omitempty"`
+	// Index says which announced file a chunk belongs to.
+	Index int `json:"index,omitempty"`
+	// Last marks the final chunk of a file.
+	Last bool `json:"last,omitempty"`
 }
 
 // NewID returns a sortable unique message ID: a millisecond timestamp followed

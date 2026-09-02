@@ -132,6 +132,14 @@ func printInvite() error {
 	return nil
 }
 
+// youngDaemon reports whether a node has been up too briefly to expect a relay
+// yet. Homing takes a few seconds, and warning about it during startup teaches
+// people to ignore the warning that matters.
+func youngDaemon(uptime string) bool {
+	d, err := time.ParseDuration(uptime)
+	return err == nil && d < time.Minute
+}
+
 func cmdInvite(args []string) error {
 	fs := flag.NewFlagSet("invite", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "machine-readable output")
@@ -236,6 +244,20 @@ func cmdDoctor(args []string) error {
 	}
 	s := r.Status
 	ok("daemon running, pid %d, up %s", s.PID, s.Uptime)
+
+	// The check that would have caught a node alive on its own machine and
+	// unreachable from every other one. `mesh ping` cannot: tailcat answers
+	// that itself, so it succeeds while this program answers nothing.
+	switch {
+	case s.Relay != "":
+		ok("reachable through relay %s", s.Relay)
+	case youngDaemon(s.Uptime):
+		ok("still choosing a relay (the node has only just started)")
+	default:
+		bad("this node has NO relay home, so no peer can reach it.")
+		bad("  it restarts itself after two minutes of this; if it does not:")
+		bad("  mesh down && mesh up")
+	}
 
 	if !s.HubUp {
 		bad("not registered with the hub, so no one can find you.")

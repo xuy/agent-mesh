@@ -215,7 +215,67 @@ func (n *Node) Start() error {
 		return nil
 	}
 	go n.registrar()
+	go n.watchRelay()
 	return nil
+}
+
+// RelayHome reports which relay this node is reachable through, or "" if it
+// currently has none -- meaning nothing on the mesh can open a connection to
+// it, however healthy it looks from the machine it runs on.
+func (n *Node) RelayHome() string {
+	if n.srv == nil {
+		return ""
+	}
+	st := n.srv.Status()
+	if st == nil || st.Self == nil {
+		return ""
+	}
+	return st.Self.Relay
+}
+
+// watchRelay notices when this node has fallen off the mesh.
+//
+// A daemon can be perfectly healthy from the outside -- answering its control
+// socket, listing peers, reporting itself registered -- while its tunnel has no
+// relay home, so no peer can reach it at all. That happened, and it was
+// invisible from this side for an hour: `mesh ping` is answered by tailcat's
+// own stack rather than by this program, so it kept succeeding, and doctor
+// believed it.
+//
+// There is no supported way to re-home the server in place, so the honest
+// recovery is to exit and let the service manager start a fresh one. Exiting
+// deliberately is better than staying up pretending: a node that cannot be
+// reached is not a node, and a restart is seconds.
+func (n *Node) watchRelay() {
+	const (
+		checkEvery = 30 * time.Second
+		giveUp     = 2 * time.Minute
+	)
+	lost := time.Time{}
+	for {
+		select {
+		case <-n.closed:
+			return
+		case <-time.After(checkEvery):
+		}
+		if n.RelayHome() != "" {
+			if !lost.IsZero() {
+				n.logf("relay home is back")
+				lost = time.Time{}
+			}
+			continue
+		}
+		if lost.IsZero() {
+			lost = time.Now()
+			n.logf("this node has no relay home: no peer can reach it right now")
+			continue
+		}
+		if time.Since(lost) >= giveUp {
+			n.logf("still no relay home after %s -- exiting so the service manager can start a fresh tunnel", giveUp)
+			n.Close()
+			os.Exit(1)
+		}
+	}
 }
 
 // waitUntilServing blocks until the tunnel has a relay home, meaning inbound

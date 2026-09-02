@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -390,9 +391,13 @@ func cmdUp(args []string) error {
 		return fmt.Errorf("no identity for %q -- run `mesh join --name %s`", nm, nm)
 	}
 
-	// A foreground daemon's stderr is its log file (spawnDaemon redirects it),
-	// so there is nothing to suppress.
-	logf := func(f string, a ...any) { fmt.Fprintf(os.Stderr, time.Now().Format("15:04:05 ")+f+"\n", a...) }
+	// Write the log ourselves rather than relying on stderr being redirected.
+	//
+	// A service manager may discard the daemon's stdout and stderr entirely --
+	// Windows Task Scheduler does -- so the log file a person is told to read
+	// when something is wrong was empty exactly when the node was running
+	// unattended, which is the only time it matters.
+	logf := daemonLogger(nm)
 
 	n := node.New(cfg, m, id, logf)
 	if err := n.Start(); err != nil {
@@ -414,6 +419,36 @@ func cmdUp(args []string) error {
 	<-sig
 	logf("%s shutting down", nm)
 	return nil
+}
+
+// daemonLogger writes to the node's log file and to stderr, and keeps the file
+// from growing without bound.
+func daemonLogger(name string) func(string, ...any) {
+	path := config.LogPath(name)
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	rotateLog(path)
+
+	var mu sync.Mutex
+	return func(f string, a ...any) {
+		line := time.Now().Format("15:04:05 ") + fmt.Sprintf(f, a...) + "\n"
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprint(os.Stderr, line)
+		if fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			fh.WriteString(line)
+			fh.Close()
+		}
+	}
+}
+
+// rotateLog keeps one previous log rather than letting a long-running daemon
+// fill a disk. One is enough: the interesting window is almost always the last
+// few minutes, and the previous file covers a restart.
+func rotateLog(path string) {
+	const maxBytes = 8 << 20
+	if st, err := os.Stat(path); err == nil && st.Size() > maxBytes {
+		os.Rename(path, path+".1")
+	}
 }
 
 func cmdDown(args []string) error {
