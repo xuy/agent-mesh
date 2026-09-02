@@ -25,7 +25,7 @@ func env(id string) wire.Envelope {
 func TestFlushDeliversInOrderAndEmpties(t *testing.T) {
 	s := open(t, 0)
 	for _, id := range []string{"a", "b", "c"} {
-		if err := s.Add("master", env(id)); err != nil {
+		if err := s.Add("master", env(id), ReasonOffline); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +56,7 @@ func TestFlushStopsAtTheFirstFailureAndKeepsTheRest(t *testing.T) {
 	// the failed one later still -- worse than not queueing at all.
 	s := open(t, 0)
 	for _, id := range []string{"a", "b", "c"} {
-		if err := s.Add("master", env(id)); err != nil {
+		if err := s.Add("master", env(id), ReasonOffline); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +83,7 @@ func TestQueueSurvivesReopening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Add("master", env("a")); err != nil {
+	if err := s.Add("master", env("a"), ReasonOffline); err != nil {
 		t.Fatal(err)
 	}
 	again, err := Open(dir, 0)
@@ -99,13 +99,13 @@ func TestQueueSurvivesReopening(t *testing.T) {
 func TestFullQueueRefusesRatherThanDropping(t *testing.T) {
 	// A silent drop would make the spool a place messages go to disappear.
 	s := open(t, 2)
-	if err := s.Add("gone", env("a")); err != nil {
+	if err := s.Add("gone", env("a"), ReasonOffline); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Add("gone", env("b")); err != nil {
+	if err := s.Add("gone", env("b"), ReasonOffline); err != nil {
 		t.Fatal(err)
 	}
-	err := s.Add("gone", env("c"))
+	err := s.Add("gone", env("c"), ReasonOffline)
 	if err == nil {
 		t.Fatal("expected the third message to be refused")
 	}
@@ -119,13 +119,13 @@ func TestCapIsPerPeer(t *testing.T) {
 	// One peer that is never coming back must not consume the budget of peers
 	// that are merely asleep.
 	s := open(t, 1)
-	if err := s.Add("gone", env("a")); err != nil {
+	if err := s.Add("gone", env("a"), ReasonOffline); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Add("gone", env("b")); err == nil {
+	if err := s.Add("gone", env("b"), ReasonOffline); err == nil {
 		t.Fatal("expected gone's queue to be full")
 	}
-	if err := s.Add("asleep", env("c")); err != nil {
+	if err := s.Add("asleep", env("c"), ReasonOffline); err != nil {
 		t.Fatalf("a different peer must still be queueable: %v", err)
 	}
 }
@@ -134,7 +134,7 @@ func TestATornLineDoesNotBlockTheRest(t *testing.T) {
 	// A crash can leave a half-written last line. Everything behind it must
 	// still be deliverable.
 	s := open(t, 0)
-	if err := s.Add("master", env("a")); err != nil {
+	if err := s.Add("master", env("a"), ReasonOffline); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.OpenFile(s.path("master"), os.O_APPEND|os.O_WRONLY, 0o600)
@@ -158,7 +158,7 @@ func TestPeerNameCannotEscapeTheSpoolDirectory(t *testing.T) {
 	// rather than trusted.
 	s := open(t, 0)
 	for _, bad := range []string{"..", "../evil", `a\b`, "a/b", ""} {
-		if err := s.Add(bad, env("x")); err == nil {
+		if err := s.Add(bad, env("x"), ReasonOffline); err == nil {
 			t.Fatalf("peer name %q should have been refused", bad)
 		}
 	}

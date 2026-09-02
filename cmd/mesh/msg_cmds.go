@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -285,5 +286,46 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Printf("name     %s\nmesh     %s\nagent    %s\nanswers  %s\nreachable via %s\nhub      %s\npeers    %d (%d online)\nuptime   %s\npid      %d\n",
 		s.Name, s.Mesh, s.Agent, s.Adapter, reach, hub, s.Peers, s.Online, s.Uptime, s.PID)
+	return nil
+}
+
+// cmdOutbox shows what is queued for peers that were not reachable.
+//
+// It exists because a queue nobody can see is indistinguishable from a message
+// that was silently dropped -- the failure this whole feature is meant to
+// remove.
+func cmdOutbox(args []string) error {
+	fs := flag.NewFlagSet("outbox", flag.ExitOnError)
+	name := fs.String("name", "", "act as this node")
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	fs.Parse(args)
+
+	c, _, err := ctlFor(*name)
+	if err != nil {
+		return err
+	}
+	r, err := c.Do(node.CtlReq{Op: "outbox"}, nil)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return printJSON(r.Outbox)
+	}
+	if len(r.Outbox) == 0 {
+		fmt.Println("nothing waiting")
+		return nil
+	}
+	peers := make([]string, 0, len(r.Outbox))
+	for p := range r.Outbox {
+		peers = append(peers, p)
+	}
+	sort.Strings(peers)
+	for _, p := range peers {
+		q := r.Outbox[p]
+		fmt.Printf("%s -- %d waiting (%s since %s)\n", p, len(q), q[0].Reason, q[0].Queued.Local().Format("15:04:05"))
+		for _, e := range q {
+			fmt.Printf("  %s  %s\n", e.Queued.Local().Format("15:04:05"), oneLine(e.Env.Body))
+		}
+	}
 	return nil
 }

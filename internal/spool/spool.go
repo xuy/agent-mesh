@@ -32,12 +32,24 @@ import (
 // budget of peers that are merely asleep.
 const DefaultMax = 500
 
-// Entry is one message waiting to be delivered, with the time it was queued.
-// The envelope keeps its original TS, so a receiver can tell that a message was
-// delayed rather than merely sent late.
+// Why a message was queued. Kept per entry rather than derived later, because
+// by the time anyone looks the peer's state has usually changed -- and "waiting
+// because it was offline" and "waiting because the tunnel failed while it
+// looked online" call for different reactions from whoever is reading.
+const (
+	// ReasonOffline: the roster said the peer was not up.
+	ReasonOffline = "peer offline"
+	// ReasonUnreachable: the roster said it was up and the tunnel failed anyway.
+	ReasonUnreachable = "unreachable"
+)
+
+// Entry is one message waiting to be delivered, with the time it was queued and
+// why. The envelope keeps its original TS, so a receiver can tell that a
+// message was delayed rather than merely sent late.
 type Entry struct {
 	Env    wire.Envelope `json:"env"`
 	Queued time.Time     `json:"queued"`
+	Reason string        `json:"reason,omitempty"`
 }
 
 // Spool is a set of per-peer queues on disk.
@@ -80,7 +92,7 @@ func (s *Spool) path(peer string) string { return filepath.Join(s.dir, peer+".js
 // cap exists for a peer that is never coming back, and in that case the honest
 // thing is to tell the sender now -- quietly discarding what it asked to send
 // would make the spool a place messages go to disappear.
-func (s *Spool) Add(peer string, env wire.Envelope) error {
+func (s *Spool) Add(peer string, env wire.Envelope, reason string) error {
 	if err := safeName(peer); err != nil {
 		return err
 	}
@@ -95,7 +107,7 @@ func (s *Spool) Add(peer string, env wire.Envelope) error {
 		return fmt.Errorf("%d messages are already waiting for %s; it has not come back since %s",
 			len(have), peer, have[0].Queued.Format(time.RFC3339))
 	}
-	b, err := json.Marshal(Entry{Env: env, Queued: time.Now().UTC()})
+	b, err := json.Marshal(Entry{Env: env, Queued: time.Now().UTC(), Reason: reason})
 	if err != nil {
 		return err
 	}
