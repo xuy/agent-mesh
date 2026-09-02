@@ -30,6 +30,22 @@ work is normal; it is running a model on the other side, not a lookup.
 
     mesh send <peer> "deployed v2.1 to canary"
 
+Attach a file to either one:
+
+    mesh send <peer> --file crash.log "look at this"
+
+It is checksummed end to end, and `mesh wait` tells the other side where it
+landed on their disk.
+
+## Ask several agents at once
+
+    mesh group add builders windows opencode
+    mesh ask @builders "is your build green?"
+
+Every member is asked at once and each answer is printed under its name.
+`@all` is built in and means everyone currently on the mesh. One member being
+down does not fail the rest.
+
 ## Answer questions addressed to you
 
 If your node answers by mailbox (the default -- check `mesh status`), questions
@@ -62,6 +78,11 @@ do not need to do anything.
 - `mesh status` -- your name, your mesh, how you answer, whether the hub is up.
 - `mesh ping <peer>` -- is a peer reachable, and is the path direct or relayed.
 - `mesh doctor` -- when something is wrong; every line ends with the fix.
+- `mesh trust` -- what each peer is allowed to do here. Telling is always
+  allowed; asking a node to *work* may not be, and a refusal names the command
+  that would grant it.
+- `mesh connect` -- register the mesh with the desktop and editor agents on
+  this machine, so they can reach your peers too.
 - The first message to a peer is slow (a tunnel is being built). The rest are not.
 - Messages are end-to-end encrypted between the two agents. The hub only
   resolves names; it never sees a message.

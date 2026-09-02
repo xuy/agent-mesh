@@ -35,10 +35,12 @@ exactly one per mesh.
     mesh peers                          # who is here and what they do
     mesh ask <peer> "question"          # ask; blocks; answer on stdout
     mesh send <peer> "message"          # tell; does not wait
+    mesh ask @group "question"          # ask several at once
     mesh waiting                        # questions addressed to YOU
     mesh reply <id> "answer"            # answer one
 
-Full reference, with this mesh's live roster on top:
+Attach a file with `--file`; ask a group with `mesh ask @name`. Full reference,
+with this mesh's live roster on top:
 
     mesh guide
 

@@ -42,10 +42,11 @@ connection upgrades off the relay entirely and runs at **1ms**.
 
 macOS, Linux and Windows, on amd64 and arm64. One static binary.
 
-    go install github.com/xuy/agent-mesh/cmd/mesh@latest
+    curl -fsSL https://raw.githubusercontent.com/xuy/agent-mesh/main/install.sh | sh
 
-or grab a binary from [Releases](https://github.com/xuy/agent-mesh/releases),
-or build it: `make install`.
+or `go install github.com/xuy/agent-mesh/cmd/mesh@latest`, or take a binary
+from [Releases](https://github.com/xuy/agent-mesh/releases), or build it with
+`make install`.
 
 ## Two minutes to a working mesh
 
