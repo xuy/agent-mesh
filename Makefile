@@ -3,6 +3,12 @@ BIN ?= $(HOME)/.local/bin/mesh
 build:
 	go build -o bin/mesh ./cmd/mesh
 
+# Two machines push this repo. The hook refuses a push that would discard the
+# other one's commits, and refuses to ship main red. Run once per clone.
+hooks:
+	@git config core.hooksPath .githooks
+	@echo "hooks on: $$(git config core.hooksPath)"
+
 # Replace atomically rather than writing into the existing file: macOS
 # invalidates the code signature of a binary modified in place and kills it on
 # exec, silently, which looks exactly like a program that produces no output.
@@ -44,4 +50,4 @@ vet:
 clean:
 	rm -rf bin
 
-.PHONY: build install test race vet clean release crosscheck
+.PHONY: build install test race vet clean release crosscheck hooks

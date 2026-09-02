@@ -1,0 +1,5 @@
+# Shell scripts must keep LF everywhere. A Windows clone with core.autocrlf=true
+# would otherwise check these out with CRLF, and `#!/bin/sh\r` is not a program:
+# the hook below would stop running on the machine that needs it most.
+.githooks/** text eol=lf
+*.sh text eol=lf
