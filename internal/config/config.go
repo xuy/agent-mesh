@@ -168,6 +168,10 @@ type Node struct {
 	Adapter string `json:"adapter,omitempty"`
 	Exec    string `json:"exec,omitempty"`
 
+	// RatePerMinute caps how fast one peer may send to this node. Zero means
+	// the default; a negative number means no limit.
+	RatePerMinute int `json:"rate_per_minute,omitempty"`
+
 	WebhookURL    string `json:"webhook_url,omitempty"`
 	WebhookHeader string `json:"webhook_header,omitempty"`
 	WebhookAsync  bool   `json:"webhook_async,omitempty"`

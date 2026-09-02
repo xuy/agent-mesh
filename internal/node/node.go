@@ -149,10 +149,10 @@ func New(cfg config.Node, m config.Mesh, id *ident.Identity, logf func(string, .
 	// before it can execute anything. A node whose work is showing a human a
 	// question starts open, because the human is the check.
 	openByDefault := n.ad.Kind() == "mailbox" || n.ad.Kind() == "notify"
-	pol, err := policy.Load(config.PeersPath(cfg.Name), openByDefault)
+	pol, err := policy.Load(config.PeersPath(cfg.Name), openByDefault, cfg.RatePerMinute)
 	if err != nil {
 		logf("reading peer policy: %v (starting with none)", err)
-		pol, _ = policy.Load("", openByDefault)
+		pol, _ = policy.Load("", openByDefault, cfg.RatePerMinute)
 	}
 	n.policy = pol
 	return n

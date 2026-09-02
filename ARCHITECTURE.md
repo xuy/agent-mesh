@@ -575,3 +575,33 @@ can open a tunnel -- it simply cannot say anything through it.
 
 What is not built: rate limiting. A peer that is allowed to ask can ask as often
 as it likes, and one agent in a loop can still spend another's tokens.
+
+## 19. Groups, and a limit on how fast a peer may talk
+
+**Groups are local.** A group is one agent's view of who it works with, not a
+fact about the mesh, so it lives in the node's own directory. Creating one takes
+no coordination, no agreement and no round trip, and two agents may disagree
+about what "builders" means without either being wrong. `@all` is built in and
+means whoever is on the mesh right now.
+
+A group ask fans out concurrently -- these are model calls, and asking five
+agents in sequence takes five times as long for no reason -- and every answer is
+printed under the name it came from, because an unattributed wall of answers is
+worse than useless when they disagree. A member being unreachable is reported
+and does not fail the others; only every member failing is an error.
+
+Members that have left the mesh are dropped at send time rather than at removal
+time, so a group does not rot into a list of names that no longer resolve.
+
+**Rate limiting** is a token bucket per peer, defaulting to sixty messages a
+minute with a third of that available as burst. The burst matters: an agent
+fanning a question out and reading answers back is a legitimate flurry and must
+not look like a runaway. The threat here is not malice, it is a retry loop with
+no backoff -- the most ordinary bug there is -- and the point is to stop it in
+seconds rather than after it has spent another agent's tokens for an hour.
+
+Order matters in the checks, and it is not arbitrary. Identity first, then
+blocking, then rate, then authority. A blocked peer must be told it is blocked
+rather than told to slow down, because those call for completely different
+actions. And rate comes before authority so a peer hammering a node it is not
+even allowed to ask cannot make that node write an audit line per attempt.
