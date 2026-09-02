@@ -24,7 +24,7 @@ func TestRegisteringInAJSONConfigLeavesTheRestAlone(t *testing.T) {
 	// Something the person configured that we must not disturb.
 	os.WriteFile(p, []byte(`{"mcpServers":{"notion":{"command":"notion-mcp"}},"theme":"dark"}`), 0o644)
 
-	if _, _, err := mergeJSONServer(p, "mcpServers", "/usr/local/bin/mesh", "master"); err != nil {
+	if _, _, err := mergeJSONServer(p, "mcpServers", "/usr/local/bin/mesh", "master", serverEntry); err != nil {
 		t.Fatal(err)
 	}
 	var got map[string]any
@@ -54,14 +54,14 @@ func TestRegisteringTwiceIsIdempotent(t *testing.T) {
 	h := sandbox(t)
 	p := filepath.Join(h, ".gemini", "settings.json")
 
-	first, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master")
+	first, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master", serverEntry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !first {
 		t.Error("the first registration reported no change")
 	}
-	second, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master")
+	second, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master", serverEntry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestAConfigWeCannotParseIsLeftUntouched(t *testing.T) {
 	original := "{\n  // a comment, which is not plain JSON\n  \"mcpServers\": {}\n}\n"
 	os.WriteFile(p, []byte(original), 0o644)
 
-	if _, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master"); err == nil {
+	if _, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master", serverEntry); err == nil {
 		t.Fatal("a file we cannot parse was rewritten anyway")
 	}
 	after, _ := os.ReadFile(p)
@@ -95,7 +95,7 @@ func TestABackupIsKeptBeforeEditing(t *testing.T) {
 	os.MkdirAll(filepath.Dir(p), 0o755)
 	os.WriteFile(p, []byte(`{"existing":true}`), 0o644)
 
-	if _, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master"); err != nil {
+	if _, _, err := mergeJSONServer(p, "mcpServers", "/bin/mesh", "master", serverEntry); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(p + ".mesh-backup")
@@ -147,5 +147,42 @@ func TestEveryTargetIsAnsweredEvenWhenAbsent(t *testing.T) {
 	}
 	if s := Snippet("/bin/mesh", "master"); !strings.Contains(s, "agent-mesh") || !strings.Contains(s, "/bin/mesh") {
 		t.Errorf("the hand-editing snippet is not usable: %s", s)
+	}
+}
+
+// The tool-server shape is close enough between harnesses to look universal and
+// is not. Zed ignores an entry with no "source", and it fails silently -- the
+// server simply never appears -- which is the worst way for this to be wrong.
+func TestZedGetsTheFieldItRequires(t *testing.T) {
+	h := sandbox(t)
+	p := filepath.Join(h, ".config", "zed", "settings.json")
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	os.WriteFile(p, []byte(`{"theme":"One Dark"}`), 0o644)
+
+	if _, _, err := mergeJSONServer(p, "context_servers", "/bin/mesh", "master", zedEntry); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	b, _ := os.ReadFile(p)
+	json.Unmarshal(b, &got)
+	if got["theme"] != "One Dark" {
+		t.Error("an unrelated setting was lost")
+	}
+	entry, ok := got["context_servers"].(map[string]any)["agent-mesh"].(map[string]any)
+	if !ok {
+		t.Fatal("the mesh was not registered under context_servers")
+	}
+	if entry["source"] != "custom" {
+		t.Errorf("Zed needs source=custom or it ignores the entry: %v", entry)
+	}
+	if entry["command"] != "/bin/mesh" {
+		t.Errorf("wrong command: %v", entry["command"])
+	}
+}
+
+// And the harnesses that do not want it must not get it.
+func TestOtherHarnessesDoNotGetZedsField(t *testing.T) {
+	if _, ok := serverEntry("/bin/mesh", "master")["source"]; ok {
+		t.Error("a Zed-specific field leaked into the shared entry")
 	}
 }

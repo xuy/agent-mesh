@@ -802,6 +802,14 @@ understand.**
 All of it is tested against a sandboxed home, including that an unparseable
 file comes back byte-identical.
 
+One trap worth naming, because it is the shape of every future bug here: the
+tool-server entry is *close enough* between harnesses to look universal and is
+not. Zed ignores an entry without a `source` field, and it fails silently --
+the server simply never appears, with no error anywhere. So each target names
+its own entry builder rather than inheriting a shared one, and a test asserts
+both that Zed gets the field and that nobody else does. A config that is subtly
+wrong is worse than one that is missing, because nothing reports it.
+
 ## 24. The quickstart did not work
 
 `demo/smoke.sh` exercises every claim the README makes, on a throwaway mesh

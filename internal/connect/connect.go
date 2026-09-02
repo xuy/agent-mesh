@@ -57,12 +57,25 @@ func exists(p string) bool {
 	return err == nil
 }
 
-// serverEntry is the MCP server definition nearly every harness shares.
+// serverEntry is the tool-server definition nearly every harness shares.
+//
+// "Nearly" is doing work: the shape is close enough between harnesses to look
+// universal and is not, and a config that is subtly wrong fails silently --
+// the server simply never appears. So each target names its own builder rather
+// than inheriting one by default.
 func serverEntry(exe, node string) map[string]any {
 	return map[string]any{
 		"command": exe,
 		"args":    []any{"mcp", "--name", node},
 	}
+}
+
+// zedEntry adds the field Zed requires and the others do not. Without
+// "source", Zed ignores the entry.
+func zedEntry(exe, node string) map[string]any {
+	e := serverEntry(exe, node)
+	e["source"] = "custom"
+	return e
 }
 
 // Snippet renders the config a person would paste by hand.
@@ -79,7 +92,7 @@ func Snippet(exe, node string) string {
 // It refuses rather than guesses: a file that does not parse is not rewritten,
 // because the alternative is destroying a config someone spent an afternoon on
 // to save them one paste.
-func mergeJSONServer(path string, section string, exe, node string) (bool, string, error) {
+func mergeJSONServer(path string, section string, exe, node string, entry func(string, string) map[string]any) (bool, string, error) {
 	cfg := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil {
 		if len(strings.TrimSpace(string(b))) > 0 {
@@ -98,7 +111,7 @@ func mergeJSONServer(path string, section string, exe, node string) (bool, strin
 		servers = map[string]any{}
 	}
 	before, _ := json.Marshal(servers["agent-mesh"])
-	servers["agent-mesh"] = serverEntry(exe, node)
+	servers["agent-mesh"] = entry(exe, node)
 	after, _ := json.Marshal(servers["agent-mesh"])
 	cfg[section] = servers
 
@@ -116,13 +129,16 @@ func mergeJSONServer(path string, section string, exe, node string) (bool, strin
 	return changed, path, nil
 }
 
-func jsonTarget(name, label, section string, paths func() string) Target {
+func jsonTarget(name, label, section string, paths func() string, entry func(string, string) map[string]any) Target {
+	if entry == nil {
+		entry = serverEntry
+	}
 	return Target{
 		Name: name, Label: label,
 		Present: func() bool { return exists(paths()) || exists(filepath.Dir(paths())) },
 		Connect: func(exe, node string) Result {
 			p := paths()
-			changed, where, err := mergeJSONServer(p, section, exe, node)
+			changed, where, err := mergeJSONServer(p, section, exe, node, entry)
 			if err != nil {
 				return Result{Name: name, Label: label, Present: true,
 					Detail: err.Error(), Manual: Snippet(exe, node)}
@@ -141,17 +157,17 @@ func jsonTarget(name, label, section string, paths func() string) Target {
 func Targets() []Target {
 	return []Target{
 		claudeCode(),
-		jsonTarget("claude-desktop", "Claude Desktop", "mcpServers", claudeDesktopConfig),
+		jsonTarget("claude-desktop", "Claude Desktop", "mcpServers", claudeDesktopConfig, nil),
 		codexTarget(),
 		jsonTarget("cursor", "Cursor", "mcpServers", func() string {
 			return filepath.Join(home(), ".cursor", "mcp.json")
-		}),
+		}, nil),
 		jsonTarget("gemini-cli", "Gemini CLI", "mcpServers", func() string {
 			return filepath.Join(home(), ".gemini", "settings.json")
-		}),
+		}, nil),
 		jsonTarget("zed", "Zed", "context_servers", func() string {
 			return filepath.Join(home(), ".config", "zed", "settings.json")
-		}),
+		}, zedEntry),
 		opencodeTarget(),
 		openclawTarget(),
 	}
