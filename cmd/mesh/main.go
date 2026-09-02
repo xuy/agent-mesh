@@ -19,6 +19,7 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh guide                  everything an agent needs to use the mesh (read this)
   mesh peers                  who else is here
   mesh ask <peer> <question>  ask a peer, wait for its answer
+  mesh group                  name a set of peers, then ask them all at once
   mesh send <peer> <message>  tell a peer something, do not wait
   mesh inbox                  what has been said to you
   mesh wait                   block until a peer says something (run in background)
@@ -86,6 +87,8 @@ func main() {
 		err = cmdTrustAction(cmd)(args)
 	case "log":
 		err = cmdLog(args)
+	case "group":
+		err = cmdGroup(args)
 	case "status":
 		err = cmdStatus(args)
 	case "doctor":

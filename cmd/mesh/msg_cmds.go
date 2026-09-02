@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/node"
 )
 
@@ -62,9 +63,16 @@ func cmdAsk(args []string) error {
 	}
 	peer, question := rest[0], joinArgs(rest[1:])
 
-	c, _, err := ctlFor(*name)
+	c, nm, err := ctlFor(*name)
 	if err != nil {
 		return err
+	}
+	if config.IsGroup(peer) {
+		peers, err := expandGroup(nm, peer, c)
+		if err != nil {
+			return err
+		}
+		return fanOut(c, peers, question, *thread, *timeout, *asJSON)
 	}
 	// Progress is off by default: a peer that streams its answer line by line
 	// would otherwise print it twice, once as progress and once as the answer.
@@ -97,18 +105,34 @@ func cmdSend(args []string) error {
 	if len(rest) < 2 {
 		return fmt.Errorf("usage: mesh send <peer> <message>")
 	}
-	c, _, err := ctlFor(*name)
+	c, nm, err := ctlFor(*name)
 	if err != nil {
 		return err
 	}
-	r, err := c.Do(node.CtlReq{
-		Op: "tell", To: rest[0], Body: joinArgs(rest[1:]), Thread: *thread,
-		TimeoutSec: int(timeout.Seconds()),
-	}, nil)
-	if err != nil {
-		return err
+	body := joinArgs(rest[1:])
+	targets := []string{rest[0]}
+	if config.IsGroup(rest[0]) {
+		targets, err = expandGroup(nm, rest[0], c)
+		if err != nil {
+			return err
+		}
 	}
-	fmt.Println(r.Body)
+	var failed int
+	for _, to := range targets {
+		r, err := c.Do(node.CtlReq{
+			Op: "tell", To: to, Body: body, Thread: *thread,
+			TimeoutSec: int(timeout.Seconds()),
+		}, nil)
+		if err != nil {
+			failed++
+			fmt.Printf("%s: %v\n", to, err)
+			continue
+		}
+		fmt.Println(r.Body)
+	}
+	if failed == len(targets) {
+		return fmt.Errorf("none of the %d peer(s) took the message", len(targets))
+	}
 	return nil
 }
 

@@ -8,7 +8,7 @@ import (
 
 func store(t *testing.T, openByDefault bool) *Store {
 	t.Helper()
-	s, err := Load(filepath.Join(t.TempDir(), "peers.json"), openByDefault)
+	s, err := Load(filepath.Join(t.TempDir(), "peers.json"), openByDefault, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,11 +126,11 @@ func TestDecisionsSurviveARestart(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "peers.json")
 
-	s1, _ := Load(path, true)
+	s1, _ := Load(path, true, -1)
 	s1.Check("peer", "keyA", false)
 	s1.SetBlocked("peer", true)
 
-	s2, err := Load(path, true)
+	s2, err := Load(path, true, -1)
 	if err != nil {
 		t.Fatal(err)
 	}

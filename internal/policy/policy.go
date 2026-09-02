@@ -62,6 +62,8 @@ type Store struct {
 	mu    sync.Mutex
 	peers map[string]*Peer
 
+	rate *rateKeeper
+
 	// DefaultMayAsk is whether an unknown peer may make this node work.
 	//
 	// It is set from the node's delivery mode rather than fixed, because the
@@ -72,9 +74,13 @@ type Store struct {
 	DefaultMayAsk bool
 }
 
-// Load reads the store at path, creating an empty one if it is absent.
-func Load(path string, defaultMayAsk bool) (*Store, error) {
-	s := &Store{path: path, peers: map[string]*Peer{}, DefaultMayAsk: defaultMayAsk}
+// Load reads the store at path. perMinute caps how fast one peer may send;
+// zero means the default and a negative number means no limit.
+func Load(path string, defaultMayAsk bool, perMinute int) (*Store, error) {
+	s := &Store{
+		path: path, peers: map[string]*Peer{},
+		DefaultMayAsk: defaultMayAsk, rate: newRateKeeper(perMinute),
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -139,6 +145,13 @@ func (s *Store) Check(name, key string, isAsk bool) Decision {
 		return Decision{Reason: fmt.Sprintf(
 			"your key does not match the one this node pinned for %q. If that node was rebuilt, "+
 				"its operator must run `mesh forget %s` to accept the new key", name, name)}
+	}
+	// Rate is checked after identity and blocking, so a blocked peer is told
+	// it is blocked rather than told to slow down, and before authority, so a
+	// peer hammering a node it is not even allowed to ask cannot make the node
+	// write an audit line per attempt.
+	if ok, wait := s.rate.allow(name, time.Now()); !ok {
+		return Decision{Reason: rateReason(wait)}
 	}
 	if isAsk && !p.MayAsk {
 		return Decision{Reason: fmt.Sprintf(
