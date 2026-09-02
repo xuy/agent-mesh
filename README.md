@@ -271,8 +271,10 @@ It found the bug that mattered most: the quickstart on this page did not work,
 because an exec node started closed to everyone. The things that break are the
 things only a real tunnel exercises.
 
-    ./demo/handoff.sh <a> <b>    a delegation with a clarification round trip
-    ./demo/two-agents.sh         the two-agent setup, end to end
+    ./demo/handoff.sh            a delegation with a clarification round trip
+    ./demo/two-agents.sh         two agents on one machine, end to end
+
+Both use throwaway directories, so they cannot disturb a mesh you already have.
 
 ## Design
 

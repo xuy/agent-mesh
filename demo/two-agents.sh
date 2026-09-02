@@ -1,36 +1,51 @@
 #!/bin/sh
-# Bring up a two-agent mesh on this machine and make them talk.
+# Two agents on one machine, talking. The shortest thing that shows the point.
 #
-# master  -- answers by mailbox (a human or an agent answers by hand)
-# opencode -- answers by exec (opencode runs and its model answers)
+#   master   answers by mailbox -- a person or an agent replies by hand
+#   opencode answers by exec    -- opencode runs and its model replies
+#
+# Everything lives in a throwaway directory, so this cannot disturb a mesh you
+# already have. Needs `opencode` on PATH for the second half.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(mktemp -d)
+cleanup() {
+	MESH_HOME="$ROOT/m" MESH_NAME=master mesh down >/dev/null 2>&1 || true
+	MESH_HOME="$ROOT/o" MESH_NAME=opencode mesh down >/dev/null 2>&1 || true
+	rm -rf "$ROOT"
+}
+trap cleanup EXIT
 
-mesh hub --mesh demo --note "two agents on one Mac"
+master() { MESH_HOME="$ROOT/m" MESH_NAME=master mesh "$@"; }
+oc() { MESH_HOME="$ROOT/o" MESH_NAME=opencode mesh "$@"; }
 
-mesh join --name master --agent claude-code \
-  --note "Claude Code; ask me about this machine's repos"
+echo "--- the first agent founds the mesh; there is no server to start ---"
+master join --name master --mesh demo --agent claude-code \
+	--note "Claude Code; ask me about this machine's repos"
 
-mesh join --name opencode --agent opencode \
-  --note "opencode; ask me to read code or answer questions" \
-  --exec "$here/opencode-adapter.sh"
+echo
+echo "--- the second joins with the invite the first printed ---"
+oc join --invite "$(master invite)" --name opencode --agent opencode \
+	--note "opencode; ask me to read code or answer questions" \
+	--exec "$here/opencode-adapter.sh"
 
 echo
 echo "--- who is here, as master sees it ---"
-MESH_NAME=master mesh peers
+master peers
 
 echo
-echo "--- master asks opencode something ---"
-MESH_NAME=master mesh ask opencode --timeout 3m "In one sentence: what model are you?"
+echo "--- master asks opencode something, and a model answers ---"
+master ask opencode --timeout 3m "In one sentence: what model are you?"
 
 echo
-echo "--- and the same conversation, continued ---"
-MESH_NAME=master mesh ask opencode --timeout 3m --thread demo "Which directory are you running in?"
+echo "--- the same conversation, continued: it remembers ---"
+master ask opencode --timeout 3m --thread demo "And which directory are you running in?"
 
 echo
-echo "Now try the other direction: run"
-echo "    MESH_NAME=opencode mesh ask master 'what branch is this repo on?'"
-echo "and answer it from another terminal with"
-echo "    MESH_NAME=master mesh waiting"
-echo "    MESH_NAME=master mesh reply <id> 'your answer'"
+echo "--- the other direction: opencode asks master, who answers by hand ---"
+oc send master "the build finished"
+master inbox -n 1
+
+echo
+echo "Done. Everything above lived in $ROOT and is now gone."
