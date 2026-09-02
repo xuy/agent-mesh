@@ -136,5 +136,28 @@ expect "it drains when the peer comes back"  "nothing waiting"           "$(a ou
 expect "and the message actually arrived"    "held while you were away"  "$(b inbox)"
 
 echo
+echo "reaching the mesh as tools"
+# The MCP surface is how every desktop and editor harness reaches the mesh, so
+# it is checked the way a client drives it rather than by reading the code.
+MCP=$(printf '%s\n' \
+	'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+	'{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+	'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mesh_peers","arguments":{}}}' \
+	| MESH_HOME="$A" MESH_NAME=alpha mesh mcp 2>/dev/null)
+expect "it announces its tools"      "mesh_ask"   "$MCP"
+expect "and answers a tool call"     "beta"       "$MCP"
+
+# And against a real client, when one is installed: our own JSON-RPC agreeing
+# with itself proves less than a client we did not write agreeing with us.
+if command -v claude >/dev/null 2>&1; then
+	CH="$ROOT/clienthome"
+	mkdir -p "$CH"
+	HOME="$CH" claude mcp add --scope user agent-mesh -- \
+		"$(command -v mesh)" mcp --name alpha >/dev/null 2>&1
+	expect "a real MCP client connects" "Connected" \
+		"$(HOME="$CH" MESH_HOME="$A" MESH_NAME=alpha claude mcp list 2>&1 || true)"
+fi
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -3,7 +3,7 @@
 Status: **the bar is met.** M1 through M9 are built and verified on both
 macOS and Windows, on real hardware, over real tunnels -- a Mac and a Windows
 11 machine exchanging messages, files and queued deliveries across the mesh.
-`demo/smoke.sh` checks twenty-one of these claims end to end and is green on
+`demo/smoke.sh` checks twenty-four of these claims end to end and is green on
 both platforms.
 
 What remains is packaging polish rather than design: a Homebrew formula and a

@@ -800,7 +800,11 @@ understand.**
   state file to avoid a subprocess is how you corrupt someone's history.
 
 All of it is tested against a sandboxed home, including that an unparseable
-file comes back byte-identical.
+file comes back byte-identical. And the surface those configs point at is
+checked against a client we did not write: `demo/smoke.sh` drives the tool
+server the way a harness does, and where the Claude Code CLI is installed it
+also asks a real MCP client to connect and report health. Our own JSON-RPC
+agreeing with itself proves considerably less.
 
 One trap worth naming, because it is the shape of every future bug here: the
 tool-server entry is *close enough* between harnesses to look universal and is

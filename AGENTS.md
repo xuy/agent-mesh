@@ -19,7 +19,7 @@ invalidates the code signature of a binary modified in place and kills it on
 exec, silently.
 
 `go test ./...` covers the logic. `demo/smoke.sh` covers what only a real
-tunnel exercises -- twenty-one checks against two throwaway nodes, a few
+tunnel exercises -- twenty-four checks against two throwaway nodes, a few
 minutes, nothing left behind. Run it before shipping anything that touches the
 message path; it has caught bugs that every unit test passed through.
 

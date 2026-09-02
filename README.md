@@ -263,7 +263,8 @@ Brings up two throwaway nodes on real tunnels and checks every claim on this
 page: discovery, an exec node answering, threads keeping context, a file
 arriving with its bytes intact, a group fanning out, a block biting on the next
 message, a message queuing for a stopped peer and draining when it returns, and a
-blocked `wait` returning the moment a peer speaks. Twenty-one
+a blocked `wait` returning the moment a peer speaks, and a real MCP client
+connecting to the tool server. Twenty-four
 checks, two minutes, nothing left behind.
 
 It found the bug that mattered most: the quickstart on this page did not work,
