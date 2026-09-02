@@ -26,6 +26,10 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+// firstMessageTimeout is how long an accepted connection may stay silent
+// before it is dropped.
+const firstMessageTimeout = 30 * time.Second
+
 const (
 	// hubKeepalive is how often a node pings the coordinator. Each ping draws
 	// a reply, so it doubles as the proof that the connection is still alive.
@@ -403,6 +407,14 @@ func (n *Node) serveTunnel(c net.Conn) {
 	defer c.Close()
 	wc := wire.NewConn(c)
 
+	// A caller that connects and then says nothing must not hold a goroutine
+	// open indefinitely. This matters most on a coordinator, which accepts
+	// tunnels from nodes it has never met -- that is what joining is -- so
+	// anyone holding its address could otherwise pin resources without ever
+	// sending a byte. The deadline is extended once a real message arrives and
+	// the work begins.
+	wc.SetDeadline(time.Now().Add(firstMessageTimeout))
+
 	// Attribution: the connection's remote address is derived from the
 	// caller's node key, so it names the caller. WireGuard already refused
 	// anyone not on the allowlist, so this only picks which allowed peer it is.
@@ -422,6 +434,10 @@ func (n *Node) serveTunnel(c net.Conn) {
 		return
 	}
 	e.From = caller
+
+	// A real message arrived, so the miserly first-message deadline gives way
+	// to the one the sender asked for.
+	wc.SetDeadline(time.Time{})
 
 	if len(e.Files) > 0 {
 		got, err := n.receiveFiles(wc, e.ID, e.Files)

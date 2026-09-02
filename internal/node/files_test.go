@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xuy/agent-mesh/internal/config"
+	"github.com/xuy/agent-mesh/internal/ident"
 	"github.com/xuy/agent-mesh/internal/wire"
 )
 
@@ -136,5 +138,58 @@ func TestAppendOnlyFilesAreRolled(t *testing.T) {
 	rollIfLarge(small)
 	if b, err := os.ReadFile(small); err != nil || string(b) != "one line\n" {
 		t.Error("a small file was disturbed")
+	}
+}
+
+// An announcement is a claim, not a guarantee. Every limit is enforced against
+// what actually arrives, because a peer that can make this node write to disk
+// will eventually be one that lies about how much.
+func TestAnnouncementsAreClaimsNotGuarantees(t *testing.T) {
+	t.Setenv("MESH_HOME", t.TempDir())
+	n := New(config.Node{Name: "me"}, config.Mesh{Name: "t"}, ident.New(), nil)
+
+	many := make([]wire.File, MaxFiles+1)
+	for i := range many {
+		many[i] = wire.File{Name: "f", Size: 1}
+	}
+	a, b := netPipe(t)
+	if _, err := n.receiveFiles(wire.NewConn(a), "m1", many); err == nil {
+		t.Error("a message announcing more attachments than the limit was accepted")
+	}
+	_ = b
+
+	c, d := netPipe(t)
+	huge := []wire.File{{Name: "big", Size: MaxFileSize + 1}}
+	if _, err := n.receiveFiles(wire.NewConn(c), "m2", huge); err == nil {
+		t.Error("an attachment declaring more than the size limit was accepted")
+	}
+	_ = d
+
+	e, f := netPipe(t)
+	sum := []wire.File{{Name: "a", Size: MaxFileSize}, {Name: "b", Size: MaxFileSize}}
+	if _, err := n.receiveFiles(wire.NewConn(e), "m3", sum); err == nil {
+		t.Error("attachments totalling more than the limit were accepted")
+	}
+	_ = f
+}
+
+// And a peer that announces one byte must not be able to send forever.
+func TestOverlongTransferIsCutOff(t *testing.T) {
+	t.Setenv("MESH_HOME", t.TempDir())
+	n := New(config.Node{Name: "me"}, config.Mesh{Name: "t"}, ident.New(), nil)
+
+	client, server := netPipe(t)
+	go func() {
+		w := wire.NewConn(client)
+		for i := 0; i < 50; i++ {
+			w.Send(wire.Envelope{Kind: wire.KindFile, Index: 0, Chunk: []byte("aaaaaaaa")})
+		}
+	}()
+	_, err := n.receiveFiles(wire.NewConn(server), "m4", []wire.File{{Name: "small", Size: 4}})
+	if err == nil {
+		t.Fatal("a peer sent far more than it announced and was not stopped")
+	}
+	if !strings.Contains(err.Error(), "more data than it announced") {
+		t.Fatalf("wrong reason: %v", err)
 	}
 }

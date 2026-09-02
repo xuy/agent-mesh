@@ -22,9 +22,17 @@ const chunkSize = 256 * 1024
 // so the limit exists whether or not anyone would ever hit it.
 const MaxFileSize = 100 << 20
 
+// MaxFiles caps how many attachments one message may announce. Without it a
+// peer could announce a hundred thousand files and make this node create a
+// hundred thousand handles before a single byte of content arrived.
+const MaxFiles = 32
+
 // describeFiles reads the attachments a caller wants to send, without loading
 // them, and returns what to announce.
 func describeFiles(paths []string) ([]wire.File, error) {
+	if len(paths) > MaxFiles {
+		return nil, fmt.Errorf("cannot attach %d files; the limit is %d", len(paths), MaxFiles)
+	}
 	var out []wire.File
 	for _, p := range paths {
 		st, err := os.Stat(p)
@@ -105,6 +113,20 @@ func sendFiles(wc *wire.Conn, from, to, corr string, files []wire.File) error {
 // message is refused rather than delivered with a half file, because an agent
 // handed a truncated log will reason about it as though it were whole.
 func (n *Node) receiveFiles(wc *wire.Conn, msgID string, files []wire.File) ([]wire.File, error) {
+	if len(files) > MaxFiles {
+		return nil, fmt.Errorf("%d attachments announced; this node accepts at most %d", len(files), MaxFiles)
+	}
+	var announced int64
+	for _, f := range files {
+		if f.Size < 0 || f.Size > MaxFileSize {
+			return nil, fmt.Errorf("attachment %q declares an unacceptable size", f.Name)
+		}
+		announced += f.Size
+	}
+	if announced > MaxFileSize {
+		return nil, fmt.Errorf("attachments total %d bytes, over the %d byte limit", announced, MaxFileSize)
+	}
+
 	dir := filepath.Join(config.FilesDir(n.cfg.Name), msgID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -137,6 +159,7 @@ func (n *Node) receiveFiles(wc *wire.Conn, msgID string, files []wire.File) ([]w
 		out[i].Path = path
 	}
 
+	written := make([]int64, len(files))
 	remaining := len(files)
 	for remaining > 0 {
 		e, err := wc.Recv()
@@ -150,6 +173,12 @@ func (n *Node) receiveFiles(wc *wire.Conn, msgID string, files []wire.File) ([]w
 			return nil, fmt.Errorf("attachment frame refers to file %d, which was not announced", e.Index)
 		}
 		if len(e.Chunk) > 0 {
+			written[e.Index] += int64(len(e.Chunk))
+			// The announcement is a claim, not a guarantee. Enforce it while
+			// writing, or a peer that announced one byte could send forever.
+			if written[e.Index] > files[e.Index].Size {
+				return nil, fmt.Errorf("%s sent more data than it announced", files[e.Index].Name)
+			}
 			if _, err := open[e.Index].Write(e.Chunk); err != nil {
 				return nil, err
 			}
