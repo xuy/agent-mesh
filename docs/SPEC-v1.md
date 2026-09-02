@@ -1,11 +1,14 @@
 # agent-mesh v1 — the bar for a public release
 
-Status: **M3 is the last one outstanding**, and it is with the Windows node
-along with the Windows service hardening. Everything else on the bar -- M1, M2,
-M4, M5, M6, M8, M9 -- is built and verified, M1 on real hardware with a Mac and
-a Windows 11 machine exchanging messages across the mesh. M7 (packaging:
-brew, scoop, an install script) is not started and is the remaining release
-chore rather than a design question. This says what has to be true before it is worth other
+Status: **the bar is met.** M1 through M9 are built and verified on both
+macOS and Windows, on real hardware, over real tunnels -- a Mac and a Windows
+11 machine exchanging messages, files and queued deliveries across the mesh.
+`demo/smoke.sh` checks twenty-one of these claims end to end and is green on
+both platforms.
+
+What remains is packaging polish rather than design: a Homebrew formula and a
+Scoop manifest, on top of the install script and the per-platform release
+binaries that exist. This says what has to be true before it is worth other
 people's attention, and what we deliberately will not build.
 
 ---

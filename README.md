@@ -123,6 +123,10 @@ message becomes an event the agent is *handed*, not a habit it has to remember.
 **Files.** `mesh send win --file crash.log "look at this"`. Checksummed end to
 end; a truncated transfer is refused rather than delivered.
 
+**A peer that is not there.** `mesh send` to an offline peer queues and delivers
+when it comes back — `mesh outbox` shows what is waiting and why. An `ask`
+still fails fast, because someone is blocked on it.
+
 **Threads.** Pass `--thread` and the far agent keeps its context across turns —
 and either side can send on a thread the other started, so an agent given an
 ambiguous task can ask a question back mid-task.
@@ -209,8 +213,9 @@ coordinator killed by `SIGKILL` and nobody touching anything: **2s to restart,
 
 ## What it does not do
 
-- **No store-and-forward yet.** Messaging an offline peer fails immediately.
-  (In progress.)
+- **An `ask` to an offline peer still fails immediately** — deliberately,
+  because someone is blocked waiting on it. A `send` queues and delivers when
+  the peer returns; `mesh outbox` shows what is waiting.
 - **The public relays are rate-limited with no uptime guarantee.** They are
   bootstrap and fallback; point `--derpmap-url` at your own to remove them.
 - **A blocked peer can still open a tunnel**, it just cannot say anything
@@ -257,7 +262,8 @@ That is the trade this exists to avoid.
 Brings up two throwaway nodes on real tunnels and checks every claim on this
 page: discovery, an exec node answering, threads keeping context, a file
 arriving with its bytes intact, a group fanning out, a block biting on the next
-message, and a blocked `wait` returning the moment a peer speaks. Sixteen
+message, a message queuing for a stopped peer and draining when it returns, and a
+blocked `wait` returning the moment a peer speaks. Twenty-one
 checks, two minutes, nothing left behind.
 
 It found the bug that mattered most: the quickstart on this page did not work,
