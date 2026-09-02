@@ -561,6 +561,35 @@ func (n *Node) peerKey(name string) string {
 // Policy exposes this node's peer decisions to the control socket.
 func (n *Node) Policy() *policy.Store { return n.policy }
 
+// ForgetPeer drops a peer from the roster as well as from the policy store.
+//
+// Keeping peers we have known is what stops a coordinator restart turning them
+// into strangers, but it also means a node that is gone for good never leaves.
+// Forgetting is the way to say it is gone: the roster entry goes, and the next
+// message from that name pins whatever key it presents.
+func (n *Node) ForgetPeer(name string) {
+	n.mu.Lock()
+	delete(n.roster, name)
+	n.byAddr = map[netip.Addr]string{}
+	for _, i := range n.roster {
+		if a, err := i.ClientAddr(); err == nil {
+			n.byAddr[a] = i.Name
+		}
+	}
+	remaining := make([]ident.Info, 0, len(n.roster))
+	for _, i := range n.roster {
+		remaining = append(remaining, i)
+	}
+	pc := n.clients[name]
+	delete(n.clients, name)
+	n.mu.Unlock()
+
+	if pc != nil {
+		pc.cl.Close()
+	}
+	n.saveRoster(remaining)
+}
+
 func (n *Node) peerAt(a netip.Addr) (string, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

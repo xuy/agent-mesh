@@ -118,6 +118,7 @@ func (n *Node) serveCtlConn(c net.Conn) {
 			err = n.policy.SetVerified(req.To, n.peerKey(req.To))
 		case "forget":
 			err = n.policy.Forget(req.To)
+			n.ForgetPeer(req.To)
 		}
 		if err != nil {
 			fail(err)
