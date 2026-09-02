@@ -23,16 +23,11 @@ func cmdConnect(args []string) error {
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	fs.Parse(hoistFlags(fs, args))
 
-	nm, err := resolveName(*name)
-	if err != nil {
-		return err
-	}
-	exe, err := service.Executable()
-	if err != nil {
-		return err
-	}
-
 	targets := connect.Targets()
+
+	// Listing is a question about this machine, not about the mesh, so it
+	// works before anyone has joined one -- which is exactly when someone is
+	// most likely to ask it.
 	if *list {
 		if *asJSON {
 			var out []connect.Result
@@ -49,6 +44,15 @@ func cmdConnect(args []string) error {
 			fmt.Printf("%-14s %-30s %s\n", t.Name, t.Label, mark)
 		}
 		return nil
+	}
+
+	nm, err := resolveName(*name)
+	if err != nil {
+		return err
+	}
+	exe, err := service.Executable()
+	if err != nil {
+		return err
 	}
 
 	// The skill is how a harness with no tool-server support still learns the

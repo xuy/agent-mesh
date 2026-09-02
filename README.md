@@ -84,6 +84,7 @@ you are done:
 
 ## Wire it into the agents you already use
 
+    $ mesh connect --list        # what this machine has, before you join anything
     $ mesh connect
       ok    Claude Code                  registered with `claude mcp add`
       ok    Claude Desktop               registered in claude_desktop_config.json
