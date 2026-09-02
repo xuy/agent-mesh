@@ -736,3 +736,39 @@ peer a map of the sender's filesystem.
 
 Verified across the real mesh: a 39KB file from the Mac arrived on the far node
 byte for byte, checksum matching.
+
+## 23. Registering with the agents someone actually runs
+
+"Works with your agents" is true or it is marketing, and the difference is
+whether a person has to hand-edit four config files in three formats before
+anything happens. `mesh connect` finds the harnesses installed on this machine
+and registers with each.
+
+Seven are covered: Claude Code, Claude Desktop, the Codex CLI and the ChatGPT
+desktop app that shares its harness, Cursor, Gemini CLI, Zed, and opencode.
+Each gets the best integration it can accept rather than the same one
+everywhere -- a skill where skills exist, a tool server where that is all there
+is.
+
+The rule that shapes the code: **never damage a config we do not fully
+understand.**
+
+- A file that parses as plain JSON is merged and a backup left beside it. Other
+  entries and unrelated settings survive; re-running changes nothing and says
+  so, because people re-run setup commands constantly.
+- A file that does not parse is **not rewritten**, and the snippet is printed
+  instead. Corrupting an editor config someone spent an afternoon on, to save
+  them one paste, is not a trade worth making.
+- Codex's config is TOML, so the entry is appended rather than the file being
+  reparsed and rewritten: appending is the one edit that cannot reorder or drop
+  somebody else's settings.
+- opencode's config may contain comments, so it is never rewritten as plain
+  JSON -- that would silently delete them, and a comment explaining why a
+  setting exists is worth more than a saved paste. It gets the skill, which is
+  its native surface anyway.
+- Claude Code's user config holds session state as well as settings, so this
+  shells out to `claude mcp add` rather than reaching into it. Editing a tool's
+  state file to avoid a subprocess is how you corrupt someone's history.
+
+All of it is tested against a sandboxed home, including that an unparseable
+file comes back byte-identical.

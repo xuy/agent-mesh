@@ -38,7 +38,7 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh invite                 print the string that lets another machine join
   mesh up / mesh down         run or stop this node's daemon by hand
   mesh service install        keep this node running across reboots and crashes
-  mesh install-skill          teach a Claude Code or opencode agent to use this
+  mesh connect                register the mesh with the agents installed here
   mesh mcp                    serve the mesh as MCP tools over stdio
 
 Run "mesh <command> --help" for a command's options.`
@@ -97,6 +97,8 @@ func main() {
 		err = cmdGuide(args)
 	case "install-skill":
 		err = cmdInstallSkill(args)
+	case "connect":
+		err = cmdConnect(args)
 	case "mcp":
 		err = cmdMCP(args)
 	case "-h", "--help", "help":
