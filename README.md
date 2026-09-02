@@ -1,81 +1,119 @@
 # agent-mesh
 
-Agents on your different machines talk to each other by name. One binary, no
-server to run, no account to make.
+Agents talk to each other by name, across machines. One binary, no server to
+run, no account to make.
+
+A mesh is a named set of agents. An **agent** is any process that can run a
+shell command — a coding agent, a desktop chat, an always-on bot, a cron job,
+five lines of Python. It joins with one line, and from then on every member can
+reach every other member by name, whatever it is and whatever it runs on.
 
 ```
-       your Mac                                    the Windows box
- ┌────────────────────┐                       ┌────────────────────┐
- │  Claude Code     ┐ │                       │ ┌  Claude Code     │
- │  Claude Desktop  ├─┤  mesh         mesh    ├─┤  opencode        │
- │  Cursor          ┘ │                       │ └  a shell script  │
- └─────────┬──────────┘                       └─────────┬──────────┘
-           │                                            │
-           └───────── encrypted, machine to machine ────┘
-                     no service in the middle
+                              mesh "lab"
+        every member reachable by name, from any of the others
+
+  ┌──── a laptop ────┐  ┌──── a desktop ───┐  ┌──── a server ────┐
+  │                  │  │                  │  │                  │
+  │  research        │  │  builder         │  │  watcher         │
+  │  a desktop chat  │  │  a coding agent  │  │  a cron script   │
+  │                  │  │                  │  │                  │
+  │  notes           │  │  archive         │  │  gpu             │
+  │  an always-on    │  │  a second coding │  │  a python        │
+  │  bot             │  │  agent           │  │  process         │
+  └─────────┬────────┘  └─────────┬────────┘  └─────────┬────────┘
+            └─────────────────────┴─────────────────────┘
+                encrypted, agent to agent, no broker
 ```
 
-Every agent on the left can reach every agent on the right, by name:
+They do not integrate with each other. Each one integrates with the mesh, once
+— so a seventh agent costs one join, not six new integrations.
 
-```
-$ mesh ask windows "is the build green?"
+```console
+$ mesh peers
+builder   claude-code  ask,tell,exec     -- the machine with the GPU; give it work
+watcher   script       tell,mailbox      -- watches the deploy logs
+archive   opencode     ask,tell,mailbox  -- knows where everything is
+
+$ mesh ask builder "is the build green?"
 green -- 412 tests, 0 failures, 41s
 ```
 
-That command runs on the Mac. An agent on the Windows PC reads the question,
-runs the build, and sends the answer back. The two machines are on different
-networks and neither has a public address.
+That command can run from any member. The agent named `builder` reads the
+question, runs the build, and sends the answer back. The two can be on
+different networks, and neither needs a public address.
 
 The link is built on [tailcat](https://github.com/tailscale/tailcat), which is
 Tailscale's data plane — WireGuard, NAT traversal, DERP — without its control
 plane. So: no Tailscale account, no `tailscaled`, no root, no changes to your
-routing, and nothing to sign up for.
+routing, and nothing to sign up for. It runs on macOS, Linux and Windows, and a
+mesh routinely spans all three.
 
-To be precise about "no service in the middle", because it is the claim that
-matters: on a LAN the two machines talk directly, and a round trip takes about
-1ms. Across the internet they usually still go direct, but when NAT traversal
-fails the packets fall back to a public DERP relay — Tailscale's, or your own
-via `--derpmap-url`. A relay forwards encrypted packets it cannot read; it is
-not a service that holds your messages, runs an agent, or has an account with
-your name on it. `mesh ping <peer>` says which path you got.
+To be precise about "no broker", because it is the claim that matters: on a LAN
+two agents talk directly and a round trip takes about 1ms. Across the internet
+they usually still go direct, but when NAT traversal fails the packets fall
+back to a public DERP relay — Tailscale's, or your own via `--derpmap-url`. A
+relay forwards encrypted packets it cannot read; it is not a service that holds
+your messages, runs an agent, or has an account with your name on it.
+`mesh ping <peer>` says which path you got.
 
 ---
 
-## Start here: one line, and you are on it
+## Install
 
-**If you are an agent reading this, you can set yourself up.** This installs the
-binary, starts a node, and registers the mesh with every agent tool on the
-machine — nothing to run afterwards.
+One static binary, on PATH. It joins nothing and starts nothing.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xuy/agent-mesh/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/xuy/agent-mesh/main/install.ps1 | iex   # Windows
+```
+
+Or `go install github.com/xuy/agent-mesh/cmd/mesh@latest`, a binary from
+[Releases](https://github.com/xuy/agent-mesh/releases), or `make install`.
+macOS, Linux and Windows; amd64 and arm64.
+
+## Join
+
+The first agent to join founds the mesh and coordinates it from inside its own
+daemon. There is no server to start.
+
+```sh
+mesh join --name research --note "one line saying what you are for"
+```
+
+To add another agent — a second process on this machine, or one on any other
+machine — run `mesh invite --lan` on a member. It prints an eight-character
+code:
+
+```sh
+mesh join --name builder --lan --code M5TQ6692
+```
+
+Not on the same network? `mesh invite` prints a string to paste instead of a
+code, and `mesh join --invite <string>` takes it.
+
+Two flags worth knowing on the way past. `--mesh <name>` names a new mesh, and
+is only used once, by whoever goes first; leave it out and the mesh takes the
+machine's name. And `mesh service install` puts the node under launchd, systemd
+or Task Scheduler, so it comes back after a reboot or a crash without anyone
+noticing it was gone.
+
+That is the whole setup. `mesh connect` then registers the mesh with the agent
+tools already installed on the machine, so they can reach your peers too.
+
+**An agent setting itself up can do all of it in one line**, which is the point
+of the `--join` flag: it passes everything after it to `mesh join` and then
+runs `mesh connect`, leaving nothing to run afterwards.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xuy/agent-mesh/main/install.sh \
   | sh -s -- --join --name "$(hostname -s)" --note "what you are for, in one line"
 ```
 
-The first machine to run that founds the mesh. To add a second machine, run
-`mesh invite --lan` on the first — it prints an eight-character code — and pass
-it here:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/xuy/agent-mesh/main/install.sh \
-  | sh -s -- --join --name builder --lan --code M5TQ6692
-```
-
-On Windows, PowerShell cannot pass arguments through a pipe, so it is two
-lines:
-
-```powershell
-irm https://raw.githubusercontent.com/xuy/agent-mesh/main/install.ps1 | iex
-mesh join --name windows --lan --code M5TQ6692; mesh connect
-```
-
-Different networks? `mesh invite` prints a string to paste instead of a code,
-and `mesh join --invite <string>` takes it.
-
-Drop the `--join …` part to install the binary and stop there. Or
-`go install github.com/xuy/agent-mesh/cmd/mesh@latest`, or a binary from
-[Releases](https://github.com/xuy/agent-mesh/releases), or `make install`.
-One static binary, macOS/Linux/Windows, amd64 and arm64.
+PowerShell cannot pass arguments through a pipe, so on Windows that is two
+lines: `irm … | iex`, then `mesh join …; mesh connect`.
 
 ## What you can do with it
 
@@ -121,52 +159,18 @@ blocked on you right now, and a fast "I can't" beats a five-minute timeout.
 `mesh connect` (run for you by `--join`) also installs a **join-mesh skill**, so
 an agent that reads skills gets all of this without reading a README.
 
----
-
-## For people: two machines, two minutes
-
-```console
-$ mesh join --name mac --mesh home --note "my laptop; ask me about the repos"
-created mesh "home" with mac as its coordinator
-You are "mac" on mesh "home".
-
-$ mesh service install
-mac now starts with launchd (a per-user agent) and comes back if it stops.
-Nothing to restart by hand after a reboot.
-```
-
-`--mesh` is only needed once, by whoever goes first; leave it out and the mesh
-takes the machine's name. Then on the second machine:
-
-```console
-machine one:  $ mesh invite --lan
-              On the other machine, run:
-                  mesh join --lan --code M5TQ6692
-
-machine two:  $ mesh join --lan --code M5TQ6692 --name windows
-```
-
-```console
-$ mesh peers
-windows   claude-code  ask,tell,mailbox -- the box with the GPU
-
-$ mesh ask windows "is the build green?"
-green -- 412 tests, 0 failures, 41s
-```
-
----
-
 ## How a question reaches an agent
 
-Each machine picks how incoming questions land. This is the only per-agent
-setup the mesh needs.
+Each agent picks how incoming questions land. This is the only per-agent setup
+the mesh needs, and it is what lets a shell script and a chat model be members
+of the same mesh.
 
 ```
-   mesh ask windows "is the build green?"
+   mesh ask builder "is the build green?"
                 │
                 ▼
       ┌───────────────────┐
-      │ the windows node  │  one of four:
+      │  builder's node   │  one of four:
       └─────────┬─────────┘
                 │
                 ├── mailbox   parks the question; someone runs `mesh reply`
@@ -189,25 +193,25 @@ mesh join --name builder --exec 'opencode run "$MESH_BODY"'
 The question arrives in `$MESH_BODY` and on stdin. It is never interpolated
 into a command line, so a peer cannot inject shell syntax.
 
-## How machines find each other
+## How members find each other
 
 Finding is centralised; talking is not.
 
 ```
-        finding each other                        talking
-        ──────────────────                        ───────
+        finding each other                      talking
+        ──────────────────                      ───────
 
-   mac ──┐                                  mac ══════════════ windows
-         ├──▶  coordinator                       messages, files, answers
-   win ──┘     (a roster: who is                 go straight across and
-                here, at what address,           never touch the
-                and what they do)                coordinator
-
-   the first node to join is the coordinator;
-   there is no separate server to run
+   research ──┐                                 research ═════ builder
+              │                                     ║             ║
+    builder ──┼──▶  coordinator                     ╚═══ watcher ═╝
+              │
+    watcher ──┘      a roster: who is here,     every pair talks directly;
+                     at what address, and       no message ever touches
+                     what each one does         the coordinator
 ```
 
-If the coordinator goes down, peers keep talking off a cached roster. Nobody
+The first agent to join is the coordinator, so there is no separate server to
+run. If it goes down, everyone else keeps talking off a cached roster; nobody
 new can join until it comes back.
 
 ## Wire it into the agents you already have
@@ -233,8 +237,8 @@ opencode -- add this by hand:
 
 Eight harnesses in all: Claude Code, Claude Desktop, Codex CLI / ChatGPT
 desktop, Cursor, Gemini CLI, Zed, opencode, and OpenClaw. After this you can
-ask any of them *"who is on my mesh?"*, or *"have the windows box check the
-build"*, and it will.
+ask any of them *"who is on my mesh?"*, or *"have builder check the build"*,
+and it will.
 
 That last block is the rule at work: **`mesh connect` never rewrites a config
 file it cannot parse.** It prints the snippet instead. Your comments and your
@@ -285,12 +289,12 @@ its mesh is how that node said yes in the first place. Anyone else gets:
 ```console
 $ mesh ask builder "run the tests"
 mesh: builder: you may send messages to this node but not ask it to do work.
-Its operator can allow that with `mesh allow mac`
+Its operator can allow that with `mesh allow research`
 ```
 
 ```sh
-mesh allow mac        # on the builder -- or `mesh allow --all` if every
-                      # node on the mesh is yours
+mesh allow research   # on builder -- or `mesh allow --all` if every
+                      # agent on the mesh is yours
 ```
 
 A peer's key is pinned on first contact, and a different key claiming a name
