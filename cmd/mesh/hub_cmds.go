@@ -13,6 +13,8 @@ import (
 	"github.com/xuy/agent-mesh/internal/hub"
 	"github.com/xuy/agent-mesh/internal/node"
 	"github.com/xuy/agent-mesh/internal/pair"
+	"github.com/xuy/agent-mesh/internal/service"
+	"strings"
 )
 
 func cmdHub(args []string) error {
@@ -247,6 +249,13 @@ func cmdDoctor(args []string) error {
 		bad("no peers known. another agent must run: mesh join")
 	} else {
 		ok("%d peer(s) known, %d online", s.Peers, s.Online)
+	}
+
+	if st, err := service.New().Status(nm); err == nil && strings.HasPrefix(st, "not installed") {
+		bad("this node will not come back after a reboot or a crash.")
+		bad("  fix it once with: mesh service install")
+	} else if err == nil {
+		ok("registered with %s, so it restarts on its own", service.New().Describe())
 	}
 
 	if s.Adapter == "mailbox" {

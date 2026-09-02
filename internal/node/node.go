@@ -25,6 +25,19 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+const (
+	// hubKeepalive is how often a node pings the coordinator. Each ping draws
+	// a reply, so it doubles as the proof that the connection is still alive.
+	hubKeepalive = 15 * time.Second
+
+	// hubSilenceTimeout is how long a node waits to hear anything at all
+	// before assuming the connection is dead and rebuilding it. It sets the
+	// worst-case time to recover from a coordinator that vanished without
+	// closing, so it is kept to a small multiple of the keepalive rather than
+	// a comfortable margin: two missed replies is already conclusive.
+	hubSilenceTimeout = 45 * time.Second
+)
+
 // Node is a running agent on the mesh.
 type Node struct {
 	cfg  config.Node
@@ -615,7 +628,7 @@ func (n *Node) registerOnce() error {
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(hubKeepalive)
 		defer t.Stop()
 		for {
 			select {
@@ -630,6 +643,12 @@ func (n *Node) registerOnce() error {
 	}()
 
 	for {
+		// A coordinator that dies without closing cleanly leaves this read
+		// blocked forever: the tunnel is gone but netstack has nothing to
+		// report, so the node would sit holding a dead connection and never
+		// re-register. The deadline is the only reliable signal. It is well
+		// clear of the 30s keepalive, each of which draws a reply.
+		c.SetReadDeadline(time.Now().Add(hubSilenceTimeout))
 		var resp hub.Resp
 		if err := dec.Decode(&resp); err != nil {
 			return fmt.Errorf("lost the hub connection: %w", err)

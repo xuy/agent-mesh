@@ -425,3 +425,44 @@ address that works beats a short one that does not.
 
 The invite went from 398 characters to 161, and about half of what remains is
 the two public keys, which is the part that cannot be compressed.
+
+## 16. Staying up without anyone watching
+
+Two machines were live for about an hour before the first thing broke, and it
+broke in the way that matters most: a coordinator died and nothing came back.
+
+The daemon was already good at recovering from things it could see. It retries
+the coordinator with backoff, keeps the roster on disk so peers stay reachable
+while discovery is down, rebuilds a tunnel whose peer restarted, and drops a
+cached client whose dial failed. What it could not do was survive its own
+death, or notice a peer that died silently.
+
+**Survive its own death.** `mesh service install` registers the node with the
+platform's service manager rather than inventing a supervisor: launchd with
+KeepAlive, a systemd user unit with Restart=always and a note about lingering,
+a Task Scheduler logon task on Windows. `mesh doctor` reports a node that is not
+registered, because a mesh that stops at the next reboot is a demo.
+
+**Notice a peer that died silently.** A coordinator killed with SIGKILL takes
+its tunnel with it, and netstack has nothing to report to the far side, so a
+node's read on its control connection blocked forever: the tunnel was gone, the
+node was holding a dead connection, and it never re-registered. This is exactly
+the bug fixed on the hub side in section 12, and it was still sitting on the
+node side -- one direction had a deadline and the other did not. Both ends now
+do.
+
+Recovery is bounded by that deadline, so the keepalive and the deadline were
+tightened together: a ping every 15 seconds, and 45 seconds of silence before
+the connection is rebuilt. Two missed replies is already conclusive; a
+comfortable margin here buys nothing except a longer outage.
+
+Measured end to end, with the coordinator killed by SIGKILL and nobody
+touching anything: 2 seconds for launchd to restart it, 47 seconds until the
+peer had re-registered and the mesh was whole.
+
+The remaining case that still needs a person is a coordinator that moves to a
+different relay -- a laptop that travels, whose pinned region is now the wrong
+one. Existing peers keep working from their cached roster, but an invite handed
+out earlier points at the old relay. Re-pinning on a large latency change, and
+telling peers the new address over the connection they already hold, is the fix,
+and it is not built yet.

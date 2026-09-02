@@ -30,6 +30,7 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh hub [--mesh NAME]      start the control plane (once per mesh)
   mesh invite                 print the string that lets another machine join
   mesh up / mesh down         run or stop this node's daemon by hand
+  mesh service install        keep this node running across reboots and crashes
   mesh install-skill          teach a Claude Code or opencode agent to use this
   mesh mcp                    serve the mesh as MCP tools over stdio
 
@@ -49,6 +50,8 @@ func main() {
 		err = cmdUp(args)
 	case "down":
 		err = cmdDown(args)
+	case "service":
+		err = cmdService(args)
 	case "hub":
 		err = cmdHub(args)
 	case "invite":

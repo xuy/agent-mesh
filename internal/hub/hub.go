@@ -47,8 +47,8 @@ type Resp struct {
 }
 
 // sessionTimeout is how long the hub waits to hear from a node before treating
-// it as gone. Nodes ping every 30s, so this tolerates two missed pings.
-const sessionTimeout = 90 * time.Second
+// it as gone. Nodes ping every 15s, so this tolerates two missed pings.
+const sessionTimeout = 45 * time.Second
 
 // Hub is the running control plane.
 type Hub struct {
