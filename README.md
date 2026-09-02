@@ -1,7 +1,7 @@
 # agent-mesh
 
-Let the agents on your different machines talk to each other by name. One
-binary, no server to run, no account to make.
+Agents on your different machines talk to each other by name. One binary, no
+server to run, no account to make.
 
 ```
        your Mac                                    the Windows box
