@@ -854,3 +854,21 @@ The rule: **a capability belongs to the daemon or to a shared helper, never to
 one front door.** Group expansion and fan-out are now shared, so `mesh ask
 @builders` and a desktop agent calling `mesh_ask` with `@builders` do the same
 thing, including `@all`.
+
+
+## 25. `mesh down && mesh up` did not work
+
+Found by the smoke test after the offline queue landed, and it is the kind of
+bug that hides behind a passing test suite: the queue was fine, the peer just
+never came back.
+
+`mesh down` returned as soon as the daemon acknowledged the stop, and the
+daemon exits a moment after acknowledging. So `mesh down && mesh up` was a race
+the second command lost -- it found the control socket still live, reported
+"already running", and started nothing. The node stayed down, and everything
+downstream looked like a delivery failure.
+
+`mesh down` now waits for the socket to actually stop answering. That sequence
+is advice this program gives in several of its own error messages, which is
+exactly why it needed to work: telling someone to run two commands that do not
+compose is worse than telling them nothing.

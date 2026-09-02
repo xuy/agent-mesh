@@ -470,6 +470,19 @@ func cmdDown(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(r.Body)
-	return nil
+
+	// Wait for it to actually be gone. The daemon acknowledges the stop and
+	// then exits, so returning on the acknowledgement makes `mesh down && mesh
+	// up` a race the second command loses: it finds the socket still live,
+	// reports "already running", and starts nothing. This is advice given in
+	// several error messages, so it had better work.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := node.Dial(nm); err != nil {
+			fmt.Println(r.Body)
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("%s acknowledged the stop but is still answering after 15s", nm)
 }
