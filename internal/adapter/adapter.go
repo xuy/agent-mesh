@@ -71,7 +71,10 @@ func (m *Mailbox) Handle(ctx context.Context, r Request, emit Emit) (string, err
 	case answer := <-p.ch:
 		return answer, nil
 	case <-ctx.Done():
-		return "", fmt.Errorf("%s did not answer in time (it is a mailbox node: someone must run `mesh reply %s`)", r.From, r.ID)
+		// Do not name anyone here. r.From is the asker, and naming it produced
+		// "windows: master did not answer in time" -- the peer prefix the CLI
+		// adds is already the node that failed to answer.
+		return "", fmt.Errorf("nobody answered in time (this is a mailbox node: someone there has to run `mesh reply %s`)", r.ID)
 	}
 }
 

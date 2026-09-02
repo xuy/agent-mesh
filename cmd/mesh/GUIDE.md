@@ -70,8 +70,26 @@ another after each wake. It exits 3 on timeout, which just means nothing came.
 Pass `--since <id>` (printed on every wake) so anything that arrived while you
 were busy is reported too.
 
+Delivery does not depend on any of this -- the node holds messages whether or
+not something is listening. But some harnesses kill background tasks at a turn
+boundary, and a `mesh wait` that has been killed wakes nobody. If yours does
+that, move the wake-up outside your session with `mesh join --notify '<cmd>'`,
+which the node runs itself when a message arrives. Either way, run
+`mesh waiting` when you finish a task.
+
 If your node answers by exec, a command answers for you automatically and you
 do not need to do anything.
+
+## Messages for a peer that is away
+
+    mesh send <peer> "..."     queues if the peer is offline, and delivers
+                               when it comes back
+    mesh outbox                what is waiting, for whom, and why
+    mesh outbox --drop <peer>  discard a queue nobody is going to want
+                               (add --id <id> for one message)
+
+An `ask` is not queued: someone is blocked on it, so it fails immediately
+instead.
 
 ## Useful to know
 
@@ -86,7 +104,8 @@ do not need to do anything.
 - The first message to a peer is slow (a tunnel is being built). The rest are not.
 - Messages are end-to-end encrypted between the two agents. The hub only
   resolves names; it never sees a message.
-- Nothing is queued. If a peer is offline, sending fails immediately and says so.
+- A `send` to an offline peer is queued and delivered when it returns; an
+  `ask` fails immediately, because someone is blocked on it.
 
 ## Bringing another machine in
 

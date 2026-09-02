@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -298,11 +299,31 @@ func cmdOutbox(args []string) error {
 	fs := flag.NewFlagSet("outbox", flag.ExitOnError)
 	name := fs.String("name", "", "act as this node")
 	asJSON := fs.Bool("json", false, "machine-readable output")
-	fs.Parse(args)
+	drop := fs.String("drop", "", "discard what is queued for this peer, instead of showing it")
+	only := fs.String("id", "", "with --drop, discard just this one message")
+	fs.Parse(hoistFlags(fs, args))
 
 	c, _, err := ctlFor(*name)
 	if err != nil {
 		return err
+	}
+	if *drop != "" {
+		r, err := c.Do(node.CtlReq{Op: "outbox-drop", To: *drop, ID: *only}, nil)
+		if err != nil {
+			return err
+		}
+		n, _ := strconv.Atoi(r.Body)
+		switch {
+		case n == 0 && *only != "":
+			fmt.Printf("nothing queued for %s with id %s\n", *drop, *only)
+		case n == 0:
+			fmt.Printf("nothing was queued for %s\n", *drop)
+		case n == 1:
+			fmt.Printf("discarded 1 message queued for %s\n", *drop)
+		default:
+			fmt.Printf("discarded %d messages queued for %s\n", n, *drop)
+		}
+		return nil
 	}
 	r, err := c.Do(node.CtlReq{Op: "outbox"}, nil)
 	if err != nil {
@@ -324,8 +345,11 @@ func cmdOutbox(args []string) error {
 		q := r.Outbox[p]
 		fmt.Printf("%s -- %d waiting (%s since %s)\n", p, len(q), q[0].Reason, q[0].Queued.Local().Format("15:04:05"))
 		for _, e := range q {
-			fmt.Printf("  %s  %s\n", e.Queued.Local().Format("15:04:05"), oneLine(e.Env.Body))
+			fmt.Printf("  %s  %s  %s\n", e.Queued.Local().Format("15:04:05"), e.Env.ID, oneLine(e.Env.Body))
 		}
 	}
+	fmt.Println()
+	fmt.Println("`mesh outbox --drop <peer>` discards a queue that is never going to be wanted;")
+	fmt.Println("add `--id <id>` for just one of them.")
 	return nil
 }

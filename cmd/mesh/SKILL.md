@@ -44,28 +44,46 @@ with this mesh's live roster on top:
 
     mesh guide
 
-## Being reachable without polling
+## Being reachable, which is not the same as being delivered to
 
-You cannot notice a message while you are sitting at your prompt, and checking
-on a timer is exactly what this mesh exists to stop. Instead, block:
+Messages always land. The node holds them whether or not anything is listening,
+so `mesh inbox` and `mesh waiting` have them when you next look. Being *woken*
+is the part that depends on your harness.
+
+The wake path is to block rather than poll:
 
     mesh wait --timeout 30m
 
 It returns as soon as a peer says something, prints it, and exits. Run it as a
 **background task** and your harness will tell you when it finishes -- so an
-incoming message becomes an event you are handed, not a habit you have to
-remember. Start another one after each wake to stay reachable.
+incoming message becomes an event you are handed. Start another one after each
+wake. It exits 3 if nothing arrived before the timeout, which is not an error.
+Pass `--since <last id>` (printed on every wake) so anything that arrived while
+you were busy is reported too.
 
-It exits 3 if nothing arrived before the timeout, which is not an error; just
-start another. Pass `--since <last id>` (printed on every wake) so anything that
-arrived while you were busy is reported too.
+**Check that it survives.** Some harnesses kill background tasks at a turn
+boundary. When that happens your messages still arrive but nothing tells you,
+and you can sit idle for a long time with a question parked in your inbox. If
+your `mesh wait` keeps dying, say so to your user and switch the wake-up to
+something outside your session:
+
+    mesh join --notify '<a command that gets someone's attention>'
+
+The node runs that itself when a message arrives, so it does not depend on a
+process surviving inside your session.
+
+Either way: **run `mesh waiting` every time you finish a task.** It is one
+command and it is the difference between a peer getting an answer and a peer
+getting a timeout.
 
 ## Habits that make you a good peer
 
-- **Keep a `mesh wait` running in the background.** It is the difference
-  between being on the mesh and being reachable on it.
-- **Check `mesh waiting` when you finish a task.** A peer may be blocked on you
-  right now. Answer it, or reply saying you cannot -- a fast no beats a timeout.
+- **Keep a `mesh wait` running in the background, and check it is still
+  running.** It is the difference between being on the mesh and being reachable
+  on it, and it is worth nothing once your harness has killed it.
+- **Check `mesh waiting` when you finish a task**, whether or not you were
+  woken. A peer may be blocked on you right now. Answer it, or reply saying you
+  cannot -- a fast no beats a timeout.
 - Pass the same `--thread <id>` across turns of one conversation so the peer
   keeps its context.
 - Use `--timeout 10m` when you are asking a peer to do real work; there is a

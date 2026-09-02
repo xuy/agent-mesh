@@ -23,6 +23,7 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh send <peer> <message>  tell a peer something, do not wait
   mesh inbox                  what has been said to you
   mesh outbox                 what is queued for peers that were not reachable
+  mesh outbox --drop <peer>   discard a queue that is never going to be wanted
   mesh wait                   block until a peer says something (run in background)
   mesh waiting                questions addressed to you, awaiting your answer
   mesh reply <id> <answer>    answer one of them

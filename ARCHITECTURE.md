@@ -204,8 +204,17 @@ loop. Every command takes `--json`.
 
 ## 9. Known limits, stated up front
 
-- **No store-and-forward yet.** Messaging an offline peer fails immediately
-  rather than queueing.
+- ~~**No store-and-forward yet.** Messaging an offline peer fails immediately
+  rather than queueing.~~ Superseded: `mesh send` queues and delivers when the
+  peer returns; only `ask` still fails fast, on purpose, because someone is
+  blocked on it. `mesh outbox` shows the queue and `--drop` empties it.
+- **A `mesh wait` is only a wake path if it outlives a turn.** Delivery does
+  not depend on it -- the node parks messages whether or not anything is
+  listening -- but some harnesses kill background tasks at every turn boundary,
+  and then a message arrives with nothing to announce it. Found by the Windows
+  node, on itself, after three killed listeners. The wake-up that does not
+  depend on surviving inside an agent's session is `--notify` or `--webhook`,
+  where the node runs it.
 - **The public DERP relays are rate-limited with no uptime guarantee** —
   tailcat's own README says so. They are bootstrap and fallback; a self-hosted
   relay is a config change (`--derpmap-url`), not a redesign.
@@ -872,3 +881,58 @@ downstream looked like a delivery failure.
 is advice this program gives in several of its own error messages, which is
 exactly why it needed to work: telling someone to run two commands that do not
 compose is worse than telling them nothing.
+
+
+## 26. Delivery is not the same as being woken
+
+The most useful bug report of the project came from the Windows node about
+itself, and it was not a crash.
+
+Its `mesh wait` had been killed three times in a row -- not by a fault, but by
+its own harness, which ends background tasks at a turn boundary. Everything
+underneath kept working perfectly: sixteen messages arrived, none were lost,
+and the inbox was intact. What was gone was any way for the agent to *know*.
+It could sit idle for hours with a question parked and a peer blocked on it.
+
+I had this backwards in three documents. "Be reachable without polling: run
+`mesh wait` in the background" was the headline advice in the README, in
+SKILL.md and in GUIDE.md, written as though it always holds. It holds only when
+the harness lets a background task outlive a turn, and that is not a property
+of this system at all -- it is a property of whatever is running the agent, and
+we cannot see it from here.
+
+So the two are now stated separately everywhere:
+
+- **Delivery** is ours and is reliable. A node parks a message whether or not
+  anything is listening, and `mesh inbox` has it later.
+- **Waking** is the harness's, and it can silently stop working. `mesh wait` is
+  the good path where it survives. Where it does not, the wake-up has to come
+  from outside the agent's session -- `--notify` or `--webhook`, where the node
+  runs it -- which is the shape that holds regardless of what the harness does
+  to processes inside it.
+
+The general lesson is worth more than the fix: a component can be completely
+correct and still leave the *system* broken, when the part that fails is
+something it depends on but does not own. The queue was fine. The tunnel was
+fine. Nobody was listening.
+
+Three smaller things fixed in the same pass, all found by running it:
+
+- **`mesh down` returned before the process exited.** §25 made it wait for the
+  control socket to stop answering, which is enough on Unix and not on Windows,
+  where the process outlives the socket by a moment and keeps `daemon.log`
+  open. Anything deleting the node directory next -- the smoke test's cleanup
+  -- failed with "Device or resource busy". It now waits for the pid to be
+  gone: signal 0 on Unix, `OpenProcess` + `GetExitCodeProcess`/`STILL_ACTIVE`
+  on Windows. Invisible on Unix, where an open handle does not block unlink.
+- **A queue with no way out is a trap.** A test run left messages addressed to
+  nodes that were never coming back, and the only remedy was to find the file
+  and delete it by hand -- so weeks later someone gets a confusing message from
+  a test. `mesh outbox --drop <peer>` empties a queue, `--id` drops one, and
+  the listing prints ids so both are usable.
+- **Two messages named the wrong thing.** The mailbox timeout said "windows:
+  master did not answer in time" -- it was naming the asker, while the CLI's
+  own prefix already named the node that failed to answer. And `mesh ping`
+  reported "relayed via DERP 1", where the 1 is tailcat's renumbering of an
+  embedded region rather than a relay anyone can look up (§14); a numeric code
+  now prints as plain "relayed".

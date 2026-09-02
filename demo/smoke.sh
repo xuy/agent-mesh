@@ -135,6 +135,23 @@ done
 expect "it drains when the peer comes back"  "nothing waiting"           "$(a outbox)"
 expect "and the message actually arrived"    "held while you were away"  "$(b inbox)"
 
+# A queue also has to have a way out, or a test run leaves messages that reach
+# someone weeks later with no idea what they refer to. Stop beta again so the
+# queue is real rather than delivered instantly.
+b down >/dev/null 2>&1 || true
+i=0
+while [ "$i" -lt 30 ]; do
+	case "$(a peers)" in
+	*beta*offline*) break ;;
+	esac
+	sleep 2
+	i=$((i + 1))
+done
+a send beta 'junk from a test run' >/dev/null 2>&1
+expect "a queue can be discarded"            "discarded 1 message"       "$(a outbox --drop beta)"
+expect "and then nothing is waiting"         "nothing waiting"           "$(a outbox)"
+b up >/dev/null 2>&1
+
 echo
 echo "reaching the mesh as tools"
 # The MCP surface is how every desktop and editor harness reaches the mesh, so

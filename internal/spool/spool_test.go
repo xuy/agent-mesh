@@ -163,3 +163,44 @@ func TestPeerNameCannotEscapeTheSpoolDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestDrop(t *testing.T) {
+	s, err := Open(t.TempDir(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b", "c"} {
+		if err := s.Add("gone", env(id), ReasonOffline); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := s.Drop("gone", "b")
+	if err != nil || n != 1 {
+		t.Fatalf("drop one: %d, %v", n, err)
+	}
+	q, err := s.Pending("gone")
+	if err != nil || len(q) != 2 || q[0].Env.ID != "a" || q[1].Env.ID != "c" {
+		t.Fatalf("after dropping b: %+v, %v", q, err)
+	}
+
+	// An id that is not there is not an error; the caller's intent is already
+	// satisfied, and reporting 0 says so.
+	if n, err := s.Drop("gone", "zzz"); err != nil || n != 0 {
+		t.Fatalf("drop missing: %d, %v", n, err)
+	}
+
+	n, err = s.Drop("gone", "")
+	if err != nil || n != 2 {
+		t.Fatalf("drop all: %d, %v", n, err)
+	}
+	peers, err := s.Peers()
+	if err != nil || len(peers) != 0 {
+		t.Fatalf("peers after dropping everything: %v, %v", peers, err)
+	}
+
+	// Dropping a queue that never existed is also not an error.
+	if n, err := s.Drop("never", ""); err != nil || n != 0 {
+		t.Fatalf("drop unknown peer: %d, %v", n, err)
+	}
+}

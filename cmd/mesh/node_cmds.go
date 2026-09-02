@@ -476,13 +476,39 @@ func cmdDown(args []string) error {
 	// up` a race the second command loses: it finds the socket still live,
 	// reports "already running", and starts nothing. This is advice given in
 	// several error messages, so it had better work.
+	//
+	// The socket closing is not enough. On Windows the process outlives it by
+	// a moment and keeps daemon.log open, so anything that deletes the node
+	// directory next -- the smoke test's cleanup does -- fails with "Device or
+	// resource busy" and leaves the directory behind. Found by the Windows
+	// node; invisible on Unix, where an open handle does not block unlink.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := node.Dial(nm); err != nil {
+		if _, err := node.Dial(nm); err == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if daemonGone(nm) {
 			fmt.Println(r.Body)
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("%s acknowledged the stop but is still answering after 15s", nm)
+	return fmt.Errorf("%s acknowledged the stop but had not exited after 15s", nm)
+}
+
+// daemonGone reports whether the pid in the node's daemon.pid is no longer
+// running. A missing or unreadable pid file counts as gone: the socket is
+// already closed by the time this is called, and refusing to return because we
+// cannot find a pid would make `mesh down` fail on a node that has stopped.
+func daemonGone(nm string) bool {
+	b, err := os.ReadFile(config.PIDPath(nm))
+	if err != nil {
+		return true
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return true
+	}
+	return !processAlive(pid)
 }

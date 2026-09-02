@@ -185,6 +185,47 @@ func (s *Spool) Peers() ([]string, error) {
 	return out, nil
 }
 
+// Drop removes queued messages for a peer: one of them if id is given, all of
+// them otherwise. It returns how many it removed.
+//
+// A queue with no way out is a trap. A test run, or a peer that is never coming
+// back, leaves messages that will be delivered weeks later to someone who has
+// no idea what they refer to -- and until this existed the only remedy was to
+// find the file and delete it by hand.
+func (s *Spool) Drop(peer, id string) (int, error) {
+	if err := safeName(peer); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	q, err := s.readLocked(peer)
+	if err != nil {
+		return 0, err
+	}
+	if id == "" {
+		if err := s.writeLocked(peer, nil); err != nil {
+			return 0, err
+		}
+		return len(q), nil
+	}
+	kept := make([]Entry, 0, len(q))
+	for _, e := range q {
+		if e.Env.ID == id {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	n := len(q) - len(kept)
+	if n == 0 {
+		return 0, nil
+	}
+	if err := s.writeLocked(peer, kept); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // Flush delivers what is waiting for a peer, oldest first, and stops at the
 // first failure so ordering is preserved.
 //

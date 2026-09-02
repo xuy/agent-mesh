@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/xuy/agent-mesh/internal/adapter"
@@ -150,6 +151,13 @@ func (n *Node) serveCtlConn(c net.Conn) {
 			return
 		}
 		enc.Encode(CtlResp{Kind: "ok", Outbox: box})
+	case "outbox-drop":
+		dropped, err := n.DropQueued(req.To, req.ID)
+		if err != nil {
+			fail(err)
+			return
+		}
+		enc.Encode(CtlResp{Kind: "ok", Body: strconv.Itoa(dropped)})
 	case "wait":
 		// Anything already parked counts as having arrived: a peer blocked on
 		// us right now is more urgent than the next message.

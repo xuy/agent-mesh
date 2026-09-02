@@ -204,6 +204,15 @@ func (n *Node) Outbox() (map[string][]spool.Entry, error) {
 	return out, nil
 }
 
+// DropQueued removes queued messages for a peer: one of them if id is given,
+// all of them otherwise.
+func (n *Node) DropQueued(peer, id string) (int, error) {
+	if n.spool == nil {
+		return 0, nil
+	}
+	return n.spool.Drop(peer, id)
+}
+
 // retryQueued drains the outbox for peers that are up, on a slow timer.
 //
 // The roster is the fast path and covers a peer coming back. This covers the
@@ -896,14 +905,27 @@ func (n *Node) Ping(ctx context.Context, to string) (PingResult, error) {
 		return res, fmt.Errorf("cannot reach %s: %w", to, err)
 	}
 	res.Latency = time.Since(start)
+	// A purely numeric region code is tailcat's renumbering of an embedded
+	// region, not a public relay -- it printed "relayed via DERP 1", which
+	// names nothing a reader can look up. Only a real code (nyc, sfo, fra,
+	// tok) is worth showing.
 	if pr.Endpoint != "" {
 		res.Path = "direct " + pr.Endpoint
-	} else if pr.DERPRegionCode != "" {
-		res.Path = "relayed via DERP " + pr.DERPRegionCode
+	} else if code := pr.DERPRegionCode; code != "" && !isAllDigits(code) {
+		res.Path = "relayed via " + code
 	} else {
 		res.Path = "relayed"
 	}
 	return res, nil
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // ---------- roster ----------
