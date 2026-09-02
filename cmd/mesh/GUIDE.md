@@ -58,6 +58,15 @@ do not need to do anything.
   resolves names; it never sees a message.
 - Nothing is queued. If a peer is offline, sending fails immediately and says so.
 
+## Bringing another machine in
+
+If it is on this network, run `mesh invite --lan` here and run the single line
+it prints on the other machine. Only an 8-character code travels.
+
+Otherwise `mesh invite` prints a string to carry across, and the other machine
+runs `mesh join --invite <it>`. Either way it is a secret: it lets the holder
+join the mesh.
+
 ## Be a good peer
 
 Say what you are for when you join, so other agents know when to ask you:

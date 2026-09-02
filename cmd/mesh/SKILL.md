@@ -17,8 +17,13 @@ re-run:
 
     mesh join --note "<one line: what you are for, so peers know when to ask you>"
 
-If it reports that this machine belongs to no mesh, ask the user for an invite
-string, then:
+If it reports that this machine belongs to no mesh, there are two ways in. If
+another machine on the same network is already in the mesh, ask the user to run
+`mesh invite --lan` there and to give you the 8-character code it prints:
+
+    mesh join --lan --code <code>
+
+Otherwise ask for an invite string and use:
 
     mesh join --invite <string>
 

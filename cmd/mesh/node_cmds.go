@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/ident"
 	"github.com/xuy/agent-mesh/internal/node"
+	"github.com/xuy/agent-mesh/internal/pair"
 )
 
 // resolveName picks which local node a command acts as: an explicit flag, then
@@ -70,6 +72,9 @@ func cmdJoin(args []string) error {
 	name := fs.String("name", "", "this node's name on the mesh (must be unique)")
 	invite := fs.String("invite", "", "invite string from `mesh invite` on a machine already in the mesh")
 	meshName := fs.String("mesh", "", "name for a new mesh, if this is the first node")
+	lan := fs.Bool("lan", false, "find the mesh on the local network instead of pasting an invite")
+	code := fs.String("code", "", "the short code shown by `mesh invite --lan` on the other machine")
+	from := fs.String("from", "", "the other machine's address, if the two cannot find each other")
 	agent := fs.String("agent", "", "what software is behind this node (default: detected)")
 	execCmd := fs.String("exec", "", "answer questions by running this shell command instead of parking them for a human")
 	webhook := fs.String("webhook", "", "deliver questions to a resident agent's local API, e.g. http://127.0.0.1:8080/api/sessions/main/messages")
@@ -80,7 +85,16 @@ func cmdJoin(args []string) error {
 	wait := fs.Duration("wait", 90*time.Second, "how long to wait for the tunnel to come up")
 	fs.Parse(args)
 
-	if *invite != "" {
+	if *lan || *code != "" || *from != "" {
+		m, err := fetchOverLAN(*code, *from)
+		if err != nil {
+			return err
+		}
+		if err := m.Save(); err != nil {
+			return err
+		}
+		fmt.Printf("found mesh %q on this network\n", m.Name)
+	} else if *invite != "" {
 		m, err := config.ParseInvite(*invite)
 		if err != nil {
 			return err
@@ -241,6 +255,49 @@ func ensureIdentity(name string) error {
 		return nil
 	}
 	return ident.New().Save(p)
+}
+
+// fetchOverLAN collects the invite from a machine offering one on this network.
+func fetchOverLAN(code, from string) (config.Mesh, error) {
+	var zero config.Mesh
+	if pair.NormalizeCode(code) == "" {
+		return zero, fmt.Errorf("a pairing code is needed -- run `mesh invite --lan` on the machine already in the mesh, then pass the code it prints as --code")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	candidates := []pair.Found{}
+	if from != "" {
+		candidates = append(candidates, pair.Found{Addr: from})
+	} else {
+		fmt.Print("looking for the mesh on this network")
+		found, err := pair.Discover(ctx, 4*time.Second)
+		fmt.Println()
+		if err != nil {
+			return zero, fmt.Errorf("%w -- try again with --from <the other machine's IP>", err)
+		}
+		candidates = found
+	}
+	if len(candidates) == 0 {
+		return zero, fmt.Errorf("no machine on this network is offering an invite.\n" +
+			"  On the machine already in the mesh, run: mesh invite --lan\n" +
+			"  If they are on different networks, or a firewall blocks discovery,\n" +
+			"  add --from <that machine's IP> here, or paste its `mesh invite` output.")
+	}
+
+	// The code is what identifies the right machine: a wrong code and a wrong
+	// machine fail identically, so trying each responder is the same operation
+	// as checking the code.
+	var lastErr error
+	for _, c := range candidates {
+		m, err := pair.Fetch(ctx, c.Addr, code)
+		if err == nil {
+			return m, nil
+		}
+		lastErr = err
+	}
+	return zero, fmt.Errorf("found %d machine(s) offering an invite, but the code did not match any of them: %w",
+		len(candidates), lastErr)
 }
 
 // detach starts this binary again, in its own session, logging to logPath.

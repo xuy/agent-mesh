@@ -7,6 +7,7 @@
 package hub
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -149,6 +150,15 @@ func saveHubKey(k key.NodePrivate, region tailcfg.DERPRegionID) error {
 func (h *Hub) Start() (string, error) {
 	h.loadClaims()
 	k, region := loadHubKey()
+	if region == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if r, err := config.PickRegion(ctx); err == nil && r != 0 {
+			region = tailcfg.DERPRegionID(r)
+		} else {
+			h.logf("hub: could not pin a relay (%v); this mesh's address may change when the hub restarts", err)
+		}
+		cancel()
+	}
 	h.srv = &tailcat.Server{
 		Key:      k,
 		RegionID: region,

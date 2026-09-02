@@ -371,3 +371,57 @@ AF_UNIX since Windows 10 1803 and Go speaks it there, which keeps filesystem
 permissions as the gate instead of opening a loopback port any local process
 could reach. If that ever disappoints on a real Windows box, the fallback is a
 named pipe with an explicit ACL -- not a TCP port.
+
+## 15. Carrying an invite without carrying a string
+
+An invite has to reach the joining machine somehow. Across the internet that is
+unavoidable: two machines that have never met, with no server vouching for
+either, have no way to establish that they mean each other unless a person
+carries something. tailcat has the same property -- its token is exactly this,
+handed over out of band -- and so does Tailscale, whose equivalent is a login.
+
+But that argument only holds for machines that cannot find each other. Two
+machines on the same network can, and then the only thing a person needs to
+carry is proof that they are standing at both. `mesh invite --lan` announces the
+mesh on a multicast group and serves its invite to whoever proves they know an
+eight-character code; `mesh join --lan --code <code>` finds it and collects it.
+The invite is encrypted under a key derived from the code with argon2id, so
+capturing the exchange leaves an attacker brute-forcing 37 bits at roughly a
+tenth of a second per guess, against an offer that is open for minutes.
+
+The code alphabet never contains both halves of a pair people misread when
+copying between two screens -- 0/O, 1/I/L, 8/B, 5/S, 2/Z, 6/G, U/V. Keeping one
+of each is the property that matters, not avoiding the characters themselves; a
+test asserts it, and it caught two mistakes in the first alphabet.
+
+Discovery probes every interface rather than the system default. A machine with
+a VPN, a container bridge or several NICs routinely defaults to the wrong one,
+and the symptom is silence -- the worst thing to hand someone who is trying to
+pair two computers.
+
+### The relay number that was not a relay number
+
+Shortening the address for the pasted invite exposed a real bug underneath it.
+
+`Server.ConnBlob()` embeds the chosen relay's whole record, which is most of a
+long invite, so the obvious shortening is to name the relay by number instead.
+The number in the embedded record, though, is not the relay's public number:
+tailcat renumbers it to 1 on the way in. Copying it out produced an address
+naming relay 1, which does not exist -- every node that used one failed with
+"no such region in derpmap.json".
+
+The same mistake had already been sitting in the region pinning added last
+round. It read the region back out of the address it had just produced, got the
+renumbered value, and stored nothing useful. Addresses had stayed stable across
+restarts only because a latency check run twice in the same place tends to pick
+the same relay, which is luck rather than the property that was claimed.
+
+Both are fixed by measuring once and remembering the answer: a node calls
+`PickBestRegion` on its first start, stores the public region id (301 for New
+York, and so on), pins its relay to it, and publishes an address that names it.
+A region cannot be recovered from an address after the fact, so it has to be
+kept when it is known. Where it is not known, the address is left long: a long
+address that works beats a short one that does not.
+
+The invite went from 398 characters to 161, and about half of what remains is
+the two public keys, which is the part that cannot be compressed.

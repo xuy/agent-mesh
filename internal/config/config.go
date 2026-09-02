@@ -64,19 +64,25 @@ type Mesh struct {
 	Coordinator string `json:"coordinator,omitempty"`
 }
 
-const invitePrefix = "am1_"
+const invitePrefix = "am1."
 
-// Invite encodes the mesh into one pasteable string. It is the only thing a
-// remote agent needs to join, and it is a secret: it carries the join key.
+// Invite encodes the mesh into one string a person can carry to another
+// machine. It is a secret: it carries the join key.
 //
-// Coordinator is stripped: it names a node on *this* machine, and carrying it
-// across would make a node on the far machine that happens to share the name
-// believe it coordinates the mesh -- and publish its own address as the one
-// everyone should join.
+// The format is "am1.<mesh>.<address>.<joinkey>" rather than base64-of-JSON,
+// which inflates by a third and hides what the thing is. Two fields are
+// deliberately absent:
+//
+//   - Note, because it is decoration and the coordinator can say it later.
+//   - Coordinator, because it names a node on *this* machine; carrying it
+//     across would make a node on the far machine that happens to share the
+//     name believe it coordinates the mesh, and publish its own address as the
+//     one everyone should join.
+//
+// The address is already in its short form: a coordinator publishes it that
+// way, naming its relay by number rather than embedding the relay's record.
 func (m Mesh) Invite() string {
-	m.Coordinator = ""
-	b, _ := json.Marshal(m)
-	return invitePrefix + base64.RawURLEncoding.EncodeToString(b)
+	return invitePrefix + SanitizeMeshName(m.Name) + "." + m.Hub + "." + m.Join
 }
 
 // ParseInvite decodes a string produced by Invite.
@@ -84,25 +90,47 @@ func ParseInvite(s string) (Mesh, error) {
 	var m Mesh
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, invitePrefix) {
-		return m, fmt.Errorf("not a mesh invite (want %s...)", invitePrefix)
+		return m, fmt.Errorf("that is not a mesh invite (it should start with %q)", invitePrefix)
 	}
-	b, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(s, invitePrefix))
-	if err != nil {
-		return m, fmt.Errorf("corrupt invite: %w", err)
+	parts := strings.Split(strings.TrimPrefix(s, invitePrefix), ".")
+	if len(parts) != 3 {
+		return m, fmt.Errorf("that invite is truncated or has extra text around it")
 	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return m, fmt.Errorf("corrupt invite: %w", err)
-	}
+	m.Name, m.Hub, m.Join = parts[0], parts[1], parts[2]
 	if m.Hub == "" || m.Join == "" {
-		return m, fmt.Errorf("invite is missing the mesh address or join key")
+		return m, fmt.Errorf("that invite is missing the mesh address or its join key")
 	}
-	m.Coordinator = "" // never inherit another machine's coordinator
+	if !strings.HasPrefix(m.Hub, "tc") {
+		return m, fmt.Errorf("that invite does not contain a mesh address")
+	}
 	return m, nil
 }
 
+// SanitizeMeshName reduces a mesh name to what can travel in an invite.
+func SanitizeMeshName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "mesh"
+	}
+	return out
+}
+
 // NewJoinKey returns a fresh join secret.
+//
+// Twelve bytes, not more: it is carried by hand, and it is the second factor
+// behind an address that is already unguessable, so length past this buys
+// nothing and costs the person typing it.
 func NewJoinKey() string {
-	var b [24]byte
+	var b [12]byte
 	rand.Read(b[:])
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }

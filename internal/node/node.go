@@ -105,6 +105,7 @@ func (n *Node) Start() error {
 		n.coord = hub.New(n.mesh, n.logf)
 		n.coord.LoadClaims()
 	}
+	n.pinRegion()
 	n.srv = &tailcat.Server{
 		Key:      n.id.Server,
 		RegionID: tailcfg.DERPRegionID(n.cfg.Region),
@@ -124,13 +125,12 @@ func (n *Node) Start() error {
 	if err := n.srv.Start(); err != nil {
 		return fmt.Errorf("starting tunnel: %w", err)
 	}
-	n.pinRegion()
 	n.loadRoster()
 
 	if n.coord != nil {
 		// The coordinator's own address is the mesh's bootstrap address, so
 		// publish it before anyone tries to join.
-		blob := string(n.srv.ConnBlob())
+		blob := config.PublicAddr(string(n.srv.ConnBlob()), n.cfg.Region)
 		if n.mesh.Hub != blob {
 			n.mesh.Hub = blob
 			if err := n.mesh.Save(); err != nil {
@@ -152,17 +152,24 @@ func (n *Node) Start() error {
 	return nil
 }
 
-// pinRegion records the relay the first start chose, so this node's address
-// stays the same across restarts.
+// pinRegion chooses this node's relay once and remembers it, so the node's
+// address is the same every time it starts.
+//
+// The measurement has to happen here rather than being read back out of the
+// address afterwards: tailcat renumbers the region when it embeds it, so an
+// address cannot tell you which public relay produced it.
 func (n *Node) pinRegion() {
 	if n.cfg.Region != 0 {
 		return
 	}
-	ci, err := tailcat.ParseConnBlob(n.srv.ConnBlob())
-	if err != nil || ci.RegionID == 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	region, err := config.PickRegion(ctx)
+	if err != nil || region == 0 {
+		n.logf("could not choose a relay to pin (%v); this node's address may change when it restarts", err)
 		return
 	}
-	n.cfg.Region = int(ci.RegionID)
+	n.cfg.Region = region
 	if err := n.cfg.Save(); err != nil {
 		n.logf("pinning relay region: %v", err)
 	}

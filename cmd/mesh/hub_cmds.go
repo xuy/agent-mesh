@@ -12,6 +12,7 @@ import (
 	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/hub"
 	"github.com/xuy/agent-mesh/internal/node"
+	"github.com/xuy/agent-mesh/internal/pair"
 )
 
 func cmdHub(args []string) error {
@@ -132,20 +133,60 @@ func printInvite() error {
 func cmdInvite(args []string) error {
 	fs := flag.NewFlagSet("invite", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "machine-readable output")
+	lan := fs.Bool("lan", false, "hand the invite over the local network, so the other machine only needs a short code")
+	minutes := fs.Int("minutes", 10, "how long the code stays valid")
 	fs.Parse(args)
 
 	m, err := config.LoadMesh()
 	if err != nil {
-		return fmt.Errorf("no mesh on this machine -- run `mesh hub --mesh <name>` to start one")
+		return fmt.Errorf("no mesh on this machine -- run `mesh join` to start one")
 	}
 	if m.Hub == "" {
-		return fmt.Errorf("mesh %q has no hub address yet -- run `mesh hub` at least once", m.Name)
+		return fmt.Errorf("mesh %q has no address yet -- run `mesh join` or `mesh up` at least once", m.Name)
+	}
+	if *lan {
+		return offerOnLAN(m, time.Duration(*minutes)*time.Minute)
 	}
 	if *asJSON {
 		return printJSON(map[string]string{"mesh": m.Name, "invite": m.Invite()})
 	}
 	fmt.Println(m.Invite())
 	return nil
+}
+
+// offerOnLAN publishes the invite on the local network under a short code, so
+// nobody has to carry a long string between two machines they are standing at.
+func offerOnLAN(m config.Mesh, ttl time.Duration) error {
+	code := pair.NewCode()
+	o, err := pair.Offer(m, code, func(f string, a ...any) { fmt.Printf(f+"\n", a...) })
+	if err != nil {
+		return err
+	}
+	defer o.Close()
+
+	fmt.Printf("Mesh %q is offering an invite on this network for %s.\n\n", m.Name, ttl)
+	fmt.Println("On the other machine, run:")
+	fmt.Printf("\n    mesh join --lan --code %s\n\n", code)
+	fmt.Println("That is the whole thing to carry across. If the two machines cannot")
+	fmt.Println("find each other, add --from <this machine's IP> on the other side.")
+	fmt.Printf("\nWaiting...\n")
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case host := <-o.Taken():
+		fmt.Printf("\n%s took the invite. It should appear in `mesh peers` shortly.\n", host)
+		// Someone else on the network may be joining too; keep the offer up
+		// briefly rather than cutting a second machine off mid-handshake.
+		time.Sleep(2 * time.Second)
+		return nil
+	case <-time.After(ttl):
+		fmt.Println("\nThe code expired. Run `mesh invite --lan` again for a new one.")
+		return nil
+	case <-sig:
+		fmt.Println("\nStopped offering.")
+		return nil
+	}
 }
 
 // cmdDoctor answers "why isn't this working" in the order the answers matter,
