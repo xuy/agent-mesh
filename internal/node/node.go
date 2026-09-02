@@ -423,6 +423,16 @@ func (n *Node) serveTunnel(c net.Conn) {
 	}
 	e.From = caller
 
+	if len(e.Files) > 0 {
+		got, err := n.receiveFiles(wc, e.ID, e.Files)
+		if err != nil {
+			n.logf("attachment from %s failed: %v", caller, err)
+			wc.Send(wire.Envelope{Corr: e.ID, From: n.cfg.Name, To: caller, Kind: wire.KindError, Body: err.Error()})
+			return
+		}
+		e.Files = got
+	}
+
 	// Authority is checked per message, not per connection: a peer blocked a
 	// moment ago must not get one more request in on a tunnel it already had.
 	d := n.policy.Check(caller, n.peerKey(caller), e.Kind == wire.KindAsk)
@@ -542,6 +552,11 @@ func (n *Node) dropClient(name string) {
 
 // Ask sends a question and waits for the answer, streaming progress to onChunk.
 func (n *Node) Ask(ctx context.Context, to, body, thread string, onChunk func(string)) (string, error) {
+	return n.AskWithFiles(ctx, to, body, thread, nil, onChunk)
+}
+
+// AskWithFiles is Ask with attachments.
+func (n *Node) AskWithFiles(ctx context.Context, to, body, thread string, files []string, onChunk func(string)) (string, error) {
 	cl, _, err := n.client(to)
 	if err != nil {
 		return "", err
@@ -557,10 +572,17 @@ func (n *Node) Ask(ctx context.Context, to, body, thread string, onChunk func(st
 	if !hasDeadline {
 		deadline = time.Now().Add(10 * time.Minute)
 	}
+	attached, err := describeFiles(files)
+	if err != nil {
+		return "", err
+	}
 	id := wire.NewID()
-	req := wire.Envelope{ID: id, From: n.cfg.Name, To: to, Kind: wire.KindAsk, Thread: thread, Body: body, Deadline: deadline, TS: time.Now().UTC()}
+	req := wire.Envelope{ID: id, From: n.cfg.Name, To: to, Kind: wire.KindAsk, Thread: thread, Body: body, Deadline: deadline, TS: time.Now().UTC(), Files: stripPaths(attached)}
 	if err := wc.Send(req); err != nil {
 		return "", err
+	}
+	if err := sendFiles(wc, n.cfg.Name, to, id, attached); err != nil {
+		return "", fmt.Errorf("sending attachments to %s: %w", to, err)
 	}
 	n.appendInbox(req)
 
@@ -592,6 +614,11 @@ func (n *Node) Ask(ctx context.Context, to, body, thread string, onChunk func(st
 
 // Tell delivers a message without waiting for an answer.
 func (n *Node) Tell(ctx context.Context, to, body, thread string) error {
+	return n.TellWithFiles(ctx, to, body, thread, nil)
+}
+
+// TellWithFiles is Tell with attachments.
+func (n *Node) TellWithFiles(ctx context.Context, to, body, thread string, files []string) error {
 	cl, _, err := n.client(to)
 	if err != nil {
 		return err
@@ -605,9 +632,16 @@ func (n *Node) Tell(ctx context.Context, to, body, thread string) error {
 	if d, ok := ctx.Deadline(); ok {
 		wc.SetDeadline(d)
 	}
-	req := wire.Envelope{ID: wire.NewID(), From: n.cfg.Name, To: to, Kind: wire.KindTell, Thread: thread, Body: body, TS: time.Now().UTC()}
+	attached, err := describeFiles(files)
+	if err != nil {
+		return err
+	}
+	req := wire.Envelope{ID: wire.NewID(), From: n.cfg.Name, To: to, Kind: wire.KindTell, Thread: thread, Body: body, TS: time.Now().UTC(), Files: stripPaths(attached)}
 	if err := wc.Send(req); err != nil {
 		return err
+	}
+	if err := sendFiles(wc, n.cfg.Name, to, req.ID, attached); err != nil {
+		return fmt.Errorf("sending attachments to %s: %w", to, err)
 	}
 	n.appendInbox(req)
 	e, err := wc.Recv()

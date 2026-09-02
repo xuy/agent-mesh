@@ -42,6 +42,9 @@ func cmdWait(args []string) error {
 		return printJSON(r.Msgs)
 	}
 	for _, m := range r.Msgs {
+		for _, f := range m.Files {
+			fmt.Printf("%s sent a file: %s (%d bytes)\n  saved at %s\n", m.From, f.Name, f.Size, f.Path)
+		}
 		switch m.Kind {
 		case "ask":
 			fmt.Printf("%s asks: %s\n", m.From, m.Body)

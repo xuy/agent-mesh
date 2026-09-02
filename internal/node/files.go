@@ -194,3 +194,15 @@ func safeName(name string) string {
 	}
 	return name
 }
+
+// stripPaths removes the local path before an announcement goes on the wire.
+// Where a file happens to live on this machine is nobody else's business, and
+// leaking it would hand a peer a map of the sender's filesystem.
+func stripPaths(files []wire.File) []wire.File {
+	out := make([]wire.File, len(files))
+	for i, f := range files {
+		f.Path = ""
+		out[i] = f
+	}
+	return out
+}

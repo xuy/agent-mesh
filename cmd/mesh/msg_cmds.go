@@ -55,6 +55,8 @@ func cmdAsk(args []string) error {
 	timeout := fs.Duration("timeout", 5*time.Minute, "how long to wait for an answer")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	stream := fs.Bool("stream", false, "show the peer's progress on stderr while it works")
+	var files fileList
+	fs.Var(&files, "file", "attach a file (repeatable)")
 	fs.Parse(hoistFlags(fs, args))
 
 	rest := fs.Args()
@@ -82,7 +84,7 @@ func cmdAsk(args []string) error {
 	}
 	r, err := c.Do(node.CtlReq{
 		Op: "ask", To: peer, Body: question, Thread: *thread,
-		TimeoutSec: int(timeout.Seconds()),
+		TimeoutSec: int(timeout.Seconds()), Files: files,
 	}, onChunk)
 	if err != nil {
 		return err
@@ -99,6 +101,8 @@ func cmdSend(args []string) error {
 	name := fs.String("name", "", "act as this node")
 	thread := fs.String("thread", "", "group this with earlier messages")
 	timeout := fs.Duration("timeout", 60*time.Second, "how long to wait for delivery")
+	var files fileList
+	fs.Var(&files, "file", "attach a file (repeatable)")
 	fs.Parse(hoistFlags(fs, args))
 
 	rest := fs.Args()
@@ -121,7 +125,7 @@ func cmdSend(args []string) error {
 	for _, to := range targets {
 		r, err := c.Do(node.CtlReq{
 			Op: "tell", To: to, Body: body, Thread: *thread,
-			TimeoutSec: int(timeout.Seconds()),
+			TimeoutSec: int(timeout.Seconds()), Files: files,
 		}, nil)
 		if err != nil {
 			failed++

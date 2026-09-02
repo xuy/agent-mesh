@@ -16,14 +16,15 @@ import (
 
 // CtlReq is a command from the local CLI to the running daemon.
 type CtlReq struct {
-	Op         string `json:"op"`
-	To         string `json:"to,omitempty"`
-	Body       string `json:"body,omitempty"`
-	Thread     string `json:"thread,omitempty"`
-	ID         string `json:"id,omitempty"`
-	TimeoutSec int    `json:"timeout_sec,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	Incoming   bool   `json:"incoming,omitempty"`
+	Op         string   `json:"op"`
+	To         string   `json:"to,omitempty"`
+	Body       string   `json:"body,omitempty"`
+	Thread     string   `json:"thread,omitempty"`
+	ID         string   `json:"id,omitempty"`
+	TimeoutSec int      `json:"timeout_sec,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
+	Incoming   bool     `json:"incoming,omitempty"`
+	Files      []string `json:"files,omitempty"`
 }
 
 // CtlResp is one frame of the daemon's answer. A streaming command sends any
@@ -181,13 +182,13 @@ func (n *Node) serveCtlConn(c net.Conn) {
 		}
 		enc.Encode(CtlResp{Kind: "ok", Body: "answered " + req.ID})
 	case "tell":
-		if err := n.Tell(ctx, req.To, req.Body, req.Thread); err != nil {
+		if err := n.TellWithFiles(ctx, req.To, req.Body, req.Thread, req.Files); err != nil {
 			fail(err)
 			return
 		}
 		enc.Encode(CtlResp{Kind: "ok", Body: "delivered to " + req.To})
 	case "ask":
-		answer, err := n.Ask(ctx, req.To, req.Body, req.Thread, func(chunk string) {
+		answer, err := n.AskWithFiles(ctx, req.To, req.Body, req.Thread, req.Files, func(chunk string) {
 			enc.Encode(CtlResp{Kind: "chunk", Body: chunk})
 		})
 		if err != nil {

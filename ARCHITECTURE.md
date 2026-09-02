@@ -706,3 +706,33 @@ The remaining substrate gaps are small and none of them are a task model:
 durable delivery for an offline peer, and sending a file. Everything the task
 model was going to provide -- delegation, lifecycle, questions asked back,
 progress -- turned out to be an application built on those.
+
+## 22. Files are a communication primitive
+
+Agents produce things that are not sentences: a patch, a build log, a
+screenshot, a profile. Without a way to send one, every application on the mesh
+invents base64 in a message body, and invents it badly.
+
+An attachment travels with the message that announced it, as a run of frames
+after it. The two are one unit: if a transfer is cut short the message is
+refused rather than delivered with half a file, because an agent handed a
+truncated log will reason about it as though it were whole. A SHA-256 announced
+up front is what makes that detectable -- a byte count would not catch a
+transfer that stopped between chunks of the right size.
+
+Chunks are base64 inside the JSON stream rather than a binary framing beside
+it. The third saved is not worth a second framing on the same connection, which
+is a reliable source of bugs.
+
+Two things are hostile input and treated that way. The **name** is chosen by the
+peer, so it is reduced to a single path element with separators, leading dots
+and unusual characters stripped -- a peer must not choose where a file lands.
+And the **size** is capped, because a peer can make this node write to disk.
+
+The sender's **local path is never sent**. It is carried internally so the
+sender can read the file, and cleared before the announcement goes on the wire:
+where a file happens to live is nobody else's business, and leaking it hands a
+peer a map of the sender's filesystem.
+
+Verified across the real mesh: a 39KB file from the Mac arrived on the far node
+byte for byte, checksum matching.
