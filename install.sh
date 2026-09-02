@@ -5,10 +5,22 @@
 #
 # Downloads the latest release for this OS and architecture, verifies it runs,
 # and puts it on PATH. Set MESH_INSTALL_DIR to choose where.
+#
+# Add --join to also join a mesh and register it with the agents installed on
+# this machine. Everything after --join is passed to `mesh join`:
+#
+#   ... | sh -s -- --join --name mac --mesh home
+#   ... | sh -s -- --join --lan --code M5TQ6692
 set -eu
 
 REPO="xuy/agent-mesh"
 DIR="${MESH_INSTALL_DIR:-$HOME/.local/bin}"
+
+join=no
+if [ $# -gt 0 ] && [ "$1" = "--join" ]; then
+	join=yes
+	shift
+fi
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
@@ -46,7 +58,22 @@ trap - EXIT
 echo "installed $DIR/mesh"
 case ":$PATH:" in
 	*":$DIR:"*) ;;
-	*) echo; echo "$DIR is not on your PATH. Add it:"; echo "    export PATH=\"$DIR:\$PATH\"" ;;
+	*) on_path=no ;;
 esac
+
+if [ "$join" = no ]; then
+	[ "${on_path:-yes}" = yes ] || { echo; echo "$DIR is not on your PATH. Add it:"; echo "    export PATH=\"$DIR:\$PATH\""; }
+	echo
+	echo "Next:  mesh join --name \$(hostname -s)"
+	exit 0
+fi
+
+# --join: come back with a node that is already running and already registered
+# with the agents on this machine, so the caller has nothing left to run.
 echo
-echo "Next:  mesh join --name \$(hostname -s)"
+"$DIR/mesh" join "$@"
+echo
+"$DIR/mesh" connect || true
+echo
+[ "${on_path:-yes}" = yes ] || { echo "$DIR is not on your PATH. Add it:"; echo "    export PATH=\"$DIR:\$PATH\""; echo; }
+echo "Next:  mesh service install    # keep this node up across reboots"
