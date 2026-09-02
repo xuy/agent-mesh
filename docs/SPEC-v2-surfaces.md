@@ -181,12 +181,20 @@ Three additions, none optional before anyone else installs this:
 
 Finish the substrate, then make it reachable. Nothing here is a task model.
 
-1. **Durable delivery** — in progress on the Windows node.
-2. **Files** — the last missing communication primitive.
-3. **`mesh connect`** — per-surface, native where possible.
-4. **The safety items in §3** — before any public instruction to install this.
-5. **Capability cards.**
-6. **A door for thin clients**, only if someone actually needs one.
+1. ~~**Durable delivery**~~ — done: a `send` to an offline peer queues and
+   drains when it returns.
+2. ~~**Files**~~ — done: attachments travel with the message that announced
+   them.
+3. ~~**`mesh connect`**~~ — done: eight harnesses, each given the best
+   integration it accepts.
+4. **The safety items in §3** — partly done. Per-peer authority, blocking,
+   pinned keys, rate limits and an audit log are built; what is missing is the
+   third tier for work that cannot be undone, and giving a desktop surface less
+   authority than the agent beside it.
+5. **Capability cards**, so a chat model routes without being told a node name.
+6. **A door for thin clients**, only if someone actually needs one — both
+   major desktop apps now run a local harness, so this is no longer the
+   ChatGPT story.
 
 A task model, if we want one, is an application written on top afterwards --
 and it should be possible for someone else to write a different one without

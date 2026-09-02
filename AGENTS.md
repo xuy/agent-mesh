@@ -18,6 +18,11 @@ Install with `make install`, never `cp` over the existing binary: macOS
 invalidates the code signature of a binary modified in place and kills it on
 exec, silently.
 
+`go test ./...` covers the logic. `demo/smoke.sh` covers what only a real
+tunnel exercises -- twenty-one checks against two throwaway nodes, a few
+minutes, nothing left behind. Run it before shipping anything that touches the
+message path; it has caught bugs that every unit test passed through.
+
 ## Two agents, one main
 
 This repo is worked by more than one agent on more than one machine, and a
@@ -29,7 +34,10 @@ a push whose tree is red.
   while you were working: `git pull --rebase origin main`, re-run the tests,
   push again. Rewriting a commit a peer has already pulled leaves them with a
   duplicate, and they will not notice until it conflicts.
-- **Rebase, do not merge.** The history here is linear and worth keeping so.
+- **Merge or rebase, but never force-push.** The history has merge commits in
+  it from two agents shipping in parallel, and that is fine -- what matters is
+  that nothing already pushed is rewritten. Rebase your own unpushed work
+  freely; leave everyone else's alone.
 - **Say what you are taking before you take it**, over the mesh, naming files
   rather than milestones: `internal/node/node.go` and `cmd/mesh/node_cmds.go`
   are where two agents collide.
