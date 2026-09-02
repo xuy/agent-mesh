@@ -1,6 +1,8 @@
 package node
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/xuy/agent-mesh/internal/config"
@@ -51,5 +53,34 @@ func TestAdapterSelection(t *testing.T) {
 		if c.want != "exec" && n.mailbox == nil {
 			t.Errorf("adapter %q has no mailbox, so nobody could answer it", c.want)
 		}
+	}
+}
+
+func TestEmptyRosterDoesNotEraseTheCache(t *testing.T) {
+	// The coordinator builds the roster from its live sessions, so restarting
+	// it pushes a roster holding only the nodes that have reconnected so far --
+	// briefly none. Caching that erases the peers this node needs precisely
+	// when the hub is the thing that is down, which is the outage loadRoster
+	// exists for. Observed on a real two-machine mesh: a coordinator restart
+	// left `mesh peers` empty and roster.json overwritten with `[]`, and the
+	// peer became unreachable even though its hub was still answering.
+	t.Setenv("MESH_HOME", t.TempDir())
+	n := New(config.Node{Name: "windows"}, config.Mesh{Name: "t", Coordinator: "master"}, ident.New(), nil)
+
+	known := []ident.Info{{Name: "master"}}
+	n.saveRoster(known)
+
+	n.saveRoster(nil)
+
+	b, err := os.ReadFile(config.RosterPath("windows"))
+	if err != nil {
+		t.Fatalf("the cache should still be on disk: %v", err)
+	}
+	var got []ident.Info
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal cache: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "master" {
+		t.Fatalf("an empty roster erased the cache: got %v, want the known peer to survive", got)
 	}
 }

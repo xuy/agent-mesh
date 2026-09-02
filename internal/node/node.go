@@ -537,7 +537,19 @@ func (n *Node) applyRoster(rs []ident.Info) {
 	n.saveRoster(names)
 }
 
+// saveRoster caches the roster so loadRoster can restore it on a start with no
+// hub to ask.
+//
+// An empty roster is never cached. The coordinator builds the roster from its
+// live sessions, so every coordinator restart pushes one that holds only the
+// nodes that have reconnected so far -- briefly none of them. Writing that
+// through would erase the cache at exactly the moment it is the only way left
+// to reach anyone, which is the outage loadRoster exists for. A stale peer
+// costs a failed dial; an erased cache costs the mesh.
 func (n *Node) saveRoster(rs []ident.Info) {
+	if len(rs) == 0 {
+		return
+	}
 	if err := config.WriteJSON(config.RosterPath(n.cfg.Name), rs); err != nil {
 		n.logf("caching roster: %v", err)
 	}
