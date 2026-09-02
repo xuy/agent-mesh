@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/xuy/agent-mesh/internal/connect"
 	"github.com/xuy/agent-mesh/internal/service"
@@ -98,5 +99,15 @@ func cmdConnect(args []string) error {
 	}
 	fmt.Printf("\nThese now act as %q on the mesh. Restart any app that was already running.\n", nm)
 	fmt.Println("Ask one of them \"who is on my mesh?\" to check.")
+
+	// A harness reaches the mesh through this node's daemon, so a node that
+	// does not come back after a reboot turns every one of these registrations
+	// into an error message the next morning. Say so here, where the person is
+	// already setting things up, rather than leaving them to find out.
+	if st, serr := service.New().Status(nm); serr == nil && strings.HasPrefix(st, "not installed") {
+		fmt.Printf("\nOne more: %s does not start on its own yet, so these will stop\n", nm)
+		fmt.Println("working after a reboot. Fix it once with:")
+		fmt.Println("\n    mesh service install")
+	}
 	return nil
 }
