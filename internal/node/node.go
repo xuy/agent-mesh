@@ -76,7 +76,9 @@ type Node struct {
 
 	// spool holds tells for peers that are not reachable, so a message survives
 	// the restart that is the usual reason a peer is missing.
-	spool *spool.Spool
+	spool    *spool.Spool
+	flushMu  sync.Mutex
+	flushing map[string]bool
 
 	inboxMu sync.Mutex
 	closed  chan struct{}
@@ -202,6 +204,37 @@ func (n *Node) Outbox() (map[string][]spool.Entry, error) {
 	return out, nil
 }
 
+// retryQueued drains the outbox for peers that are up, on a slow timer.
+//
+// The roster is the fast path and covers a peer coming back. This covers the
+// case it cannot: a message queued because the tunnel failed while the peer was
+// already online has no transition coming, so without a timer it would wait for
+// a roster change that may never happen. A minute is chosen to be slow enough
+// to be free and fast enough that nobody watches an outbox wondering.
+func (n *Node) retryQueued() {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-n.closed:
+			return
+		case <-t.C:
+			if n.spool == nil {
+				continue
+			}
+			peers, err := n.spool.Peers()
+			if err != nil {
+				continue
+			}
+			for _, p := range peers {
+				if i, ok := n.peer(p); ok && i.Online {
+					n.flushSpool(p)
+				}
+			}
+		}
+	}
+}
+
 // flushSpool delivers what is queued for a peer that has just come back.
 //
 // It runs off the roster update rather than on a timer: the roster is the only
@@ -211,8 +244,33 @@ func (n *Node) flushSpool(peer string) {
 	if n.spool == nil {
 		return
 	}
+	// One flush per peer at a time. Roster updates and the retry loop both
+	// trigger this, and two of them interleaving would deliver out of order.
+	n.flushMu.Lock()
+	if n.flushing == nil {
+		n.flushing = map[string]bool{}
+	}
+	if n.flushing[peer] {
+		n.flushMu.Unlock()
+		return
+	}
+	n.flushing[peer] = true
+	n.flushMu.Unlock()
+	defer func() {
+		n.flushMu.Lock()
+		delete(n.flushing, peer)
+		n.flushMu.Unlock()
+	}()
+
 	q, err := n.spool.Pending(peer)
 	if err != nil || len(q) == 0 {
+		return
+	}
+	// Do not dial a peer the roster says is down. Startup restores the cached
+	// roster before the coordinator has said who is actually up, so without
+	// this every offline peer with a queue costs a full dial timeout for
+	// nothing -- measured at two minutes each.
+	if i, ok := n.peer(peer); !ok || !i.Online {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -289,6 +347,7 @@ func (n *Node) Start() error {
 	}
 	go n.registrar()
 	go n.watchRelay()
+	go n.retryQueued()
 	return nil
 }
 
@@ -933,11 +992,12 @@ func (n *Node) applyRoster(rs []ident.Info) {
 		if i.Name == n.cfg.Name {
 			continue
 		}
-		// A peer we had marked offline, or had never seen, is one whose queued
-		// messages are now deliverable.
-		if prev, known := n.roster[i.Name]; !known || !prev.Online {
-			returned = append(returned, i.Name)
-		}
+		// Every online peer is a candidate to drain, not only one that just
+		// came back. A message queued as "unreachable" was queued while the
+		// peer was already online, so a transition that never happens would
+		// leave it waiting forever -- a queue that does not drain is the
+		// silent loss this replaces, wearing a different hat.
+		returned = append(returned, i.Name)
 		i.Online = true
 		next[i.Name] = i
 	}
