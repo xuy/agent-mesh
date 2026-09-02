@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -134,7 +135,8 @@ func TestWebhookReportsRejection(t *testing.T) {
 
 func TestNotifyRunsTheCommandThenParks(t *testing.T) {
 	dir := t.TempDir()
-	n := &Notify{Cmd: `printf '%s' "$MESH_FROM" > ` + dir + `/who`, Box: NewMailbox()}
+	who := filepath.Join(dir, "who")
+	n := &Notify{Cmd: cmdWriteFrom(who), Box: NewMailbox()}
 	go func() {
 		waitFor(t, func() bool { return len(n.Mailbox().Waiting()) == 1 })
 		n.Mailbox().Reply("n1", "ok")
@@ -146,7 +148,7 @@ func TestNotifyRunsTheCommandThenParks(t *testing.T) {
 	if got != "ok" {
 		t.Fatalf("answer wrong: %q", got)
 	}
-	b, err := readFile(dir + "/who")
+	b, err := readFile(who)
 	if err != nil || b != "master" {
 		t.Fatalf("the notify command did not run with the message context: %q %v", b, err)
 	}

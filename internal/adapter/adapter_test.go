@@ -61,7 +61,7 @@ func TestMailboxRejectsUnknownID(t *testing.T) {
 func TestExecPassesBodyOutOfBand(t *testing.T) {
 	// The body must never be interpolated into the command line: a peer we
 	// merely allow to talk to us must not be able to inject shell syntax.
-	e := &Exec{Cmd: `printf '%s' "$MESH_BODY"`}
+	e := &Exec{Cmd: cmdEchoBody}
 	got, err := e.Handle(context.Background(), Request{ID: "1", From: "peer", Body: `"; touch /tmp/pwned; echo "`}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestExecPassesBodyOutOfBand(t *testing.T) {
 }
 
 func TestExecStreamsLinesThenAnswers(t *testing.T) {
-	e := &Exec{Cmd: `echo one; echo two`}
+	e := &Exec{Cmd: cmdTwoLines}
 	var chunks []string
 	got, err := e.Handle(context.Background(), Request{ID: "1"}, func(c string) error {
 		chunks = append(chunks, c)
@@ -90,7 +90,7 @@ func TestExecStreamsLinesThenAnswers(t *testing.T) {
 }
 
 func TestExecReportsFailureWithStderr(t *testing.T) {
-	e := &Exec{Cmd: `echo "the model is not configured" >&2; exit 3`}
+	e := &Exec{Cmd: cmdFailStderr}
 	_, err := e.Handle(context.Background(), Request{ID: "1"}, nil)
 	if err == nil {
 		t.Fatal("a failing adapter reported success")
@@ -101,7 +101,7 @@ func TestExecReportsFailureWithStderr(t *testing.T) {
 }
 
 func TestExecSignalsThreadContinuation(t *testing.T) {
-	e := &Exec{Cmd: `printf '%s' "${MESH_CONTINUE:-none}"`}
+	e := &Exec{Cmd: cmdEchoContinue}
 	first, err := e.Handle(context.Background(), Request{ID: "1", Thread: "t"}, nil)
 	if err != nil {
 		t.Fatal(err)
