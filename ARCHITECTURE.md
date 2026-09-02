@@ -622,3 +622,53 @@ First contact with a peer also retries once with a fresh client. A peer that
 started moments ago, or restarted while we held a cached tunnel, fails the
 first attempt and succeeds on the second, and retrying here is cheaper than
 making every caller understand why.
+## 20. Keeping a Windows node alive, and three things that are not what they look like
+
+The Windows service backend registers a Task Scheduler task. Three of its
+obvious forms are wrong, each in a way that fails silently, so all three are
+recorded here rather than rediscovered.
+
+**`/SC ONLOGON` cannot be used, and the reason is not the folder.** It fails
+with "Access is denied" unless the shell is elevated. Isolated by elimination
+on Windows 11, unelevated:
+
+| form | result |
+|---|---|
+| `/SC ONCE`, `/SC HOURLY`, `/SC MINUTE` | SUCCESS |
+| `/SC ONLOGON`, `/SC ONSTART` | Access is denied |
+
+Not the task folder -- the root, `\name`, and a subfolder all fail the same way
+-- and not `/RL LIMITED`. A logon trigger scoped to one named `UserId`, which
+is what an XML definition can express and the command line cannot, needs no
+elevation at all. So the backend writes XML. That is also the only way to reach
+the settings below, none of which has a flag.
+
+**`RestartOnFailure` is not launchd's `KeepAlive`.** It covers a task that fails
+to *start*. A process that exits non-zero counts as the task *completing*: kill
+the daemon and Task Scheduler records `Last Result: 1`, state `Ready`, and does
+nothing, verified by waiting 200 seconds. Crash recovery instead comes from
+repetition -- the task re-runs every minute forever, and
+`MultipleInstancesPolicy IgnoreNew` makes each tick a no-op while the daemon is
+alive, so it only has an effect once it is not. Measured: killed at 21:43:44,
+running again at 21:44:37.
+
+**The repetition has to hang off a `TimeTrigger`, not the `LogonTrigger`.** A
+trigger's repetition arms when that trigger fires, so a logon trigger repeats
+nothing until the next logon -- which never comes for the session that just
+installed it. With the repetition on the logon trigger the watchdog looks
+correct, reports no error, and does not fire; `Next Run Time: N/A` is the tell.
+
+Two defaults would otherwise end the node quietly. `ExecutionTimeLimit` is 72
+hours, so the daemon is killed three days in and reads as a node that vanished
+for no reason. `DisallowStartIfOnBatteries` and `StopIfGoingOnBatteries` are
+both true by default, so on a laptop the mesh ends when the charger comes out.
+Both are set explicitly.
+
+Two things that remain true and are worth knowing. A task created by an
+elevated process cannot be replaced or deleted by an unelevated one, so a
+machine that installed the old elevated way needs one elevated `schtasks
+/Delete` before the unelevated path works. And the running daemon holds its own
+binary open: on Windows an executable cannot be overwritten or deleted while it
+runs, so `make install`'s `cp` then `mv -f` fails outright. Renaming a running
+binary *is* allowed, so the upgrade is rename-then-move, which is the opposite
+of the macOS advice in AGENTS.md and for an unrelated reason.
