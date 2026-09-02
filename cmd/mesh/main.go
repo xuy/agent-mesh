@@ -33,6 +33,7 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh log                    what peers have asked of you, refusals included
   mesh status                 this node
   mesh doctor                 what is wrong and what to run next
+  mesh version                which build this is
 
   mesh hub [--mesh NAME]      start the control plane (once per mesh)
   mesh invite                 print the string that lets another machine join
@@ -101,6 +102,8 @@ func main() {
 		err = cmdConnect(args)
 	case "mcp":
 		err = cmdMCP(args)
+	case "version", "--version", "-v":
+		err = cmdVersion(args)
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 		return
