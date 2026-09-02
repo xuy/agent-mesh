@@ -435,8 +435,21 @@ func (n *Node) serveTunnel(c net.Conn) {
 	}
 	e.From = caller
 
-	// A real message arrived, so the miserly first-message deadline gives way
-	// to the one the sender asked for.
+	// Authority is decided before anything is spent on the message, and per
+	// message rather than per connection: a peer blocked a moment ago must not
+	// get one more request in on a tunnel it already had -- and must not be
+	// able to make this node write a hundred megabytes to disk on the way to
+	// being refused.
+	d := n.policy.Check(caller, n.peerKey(caller), e.Kind == wire.KindAsk)
+	if !d.Allowed {
+		n.audit(e, "refused", d.Reason)
+		n.logf("refused %s from %s: %s", e.Kind, caller, d.Reason)
+		wc.Send(wire.Envelope{Corr: e.ID, From: n.cfg.Name, To: caller, Kind: wire.KindError, Body: d.Reason})
+		return
+	}
+
+	// An allowed message may take as long as the sender asked for, so the
+	// miserly first-message deadline gives way now.
 	wc.SetDeadline(time.Time{})
 
 	if len(e.Files) > 0 {
@@ -447,16 +460,6 @@ func (n *Node) serveTunnel(c net.Conn) {
 			return
 		}
 		e.Files = got
-	}
-
-	// Authority is checked per message, not per connection: a peer blocked a
-	// moment ago must not get one more request in on a tunnel it already had.
-	d := n.policy.Check(caller, n.peerKey(caller), e.Kind == wire.KindAsk)
-	if !d.Allowed {
-		n.audit(e, "refused", d.Reason)
-		n.logf("refused %s from %s: %s", e.Kind, caller, d.Reason)
-		wc.Send(wire.Envelope{Corr: e.ID, From: n.cfg.Name, To: caller, Kind: wire.KindError, Body: d.Reason})
-		return
 	}
 	n.audit(e, "accepted", "")
 
