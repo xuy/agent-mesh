@@ -21,6 +21,7 @@ import (
 	"github.com/xuy/agent-mesh/internal/config"
 	"github.com/xuy/agent-mesh/internal/hub"
 	"github.com/xuy/agent-mesh/internal/ident"
+	"github.com/xuy/agent-mesh/internal/policy"
 	"github.com/xuy/agent-mesh/internal/wire"
 	"tailscale.com/tailcfg"
 )
@@ -53,6 +54,11 @@ type Node struct {
 	// its own daemon, which is the default for the first node in a mesh.
 	coord        *hub.Hub
 	releaseLocal func()
+
+	// policy decides which peers this node deals with and what they may make
+	// it do. Consulted per message, so blocking takes effect immediately
+	// rather than at the next restart.
+	policy *policy.Store
 
 	mu      sync.Mutex
 	roster  map[string]ident.Info  // by name, excluding self
@@ -137,6 +143,18 @@ func New(cfg config.Node, m config.Mesh, id *ident.Identity, logf func(string, .
 	if p, ok := n.ad.(interface{ Mailbox() *adapter.Mailbox }); ok && n.mailbox == nil {
 		n.mailbox = p.Mailbox()
 	}
+
+	// A node whose "work" is running a command or waking a live agent starts
+	// closed: a peer that has never been vouched for should have to be let in
+	// before it can execute anything. A node whose work is showing a human a
+	// question starts open, because the human is the check.
+	openByDefault := n.ad.Kind() == "mailbox" || n.ad.Kind() == "notify"
+	pol, err := policy.Load(config.PeersPath(cfg.Name), openByDefault)
+	if err != nil {
+		logf("reading peer policy: %v (starting with none)", err)
+		pol, _ = policy.Load("", openByDefault)
+	}
+	n.policy = pol
 	return n
 }
 
@@ -327,6 +345,18 @@ func (n *Node) serveTunnel(c net.Conn) {
 		return
 	}
 	e.From = caller
+
+	// Authority is checked per message, not per connection: a peer blocked a
+	// moment ago must not get one more request in on a tunnel it already had.
+	d := n.policy.Check(caller, n.peerKey(caller), e.Kind == wire.KindAsk)
+	if !d.Allowed {
+		n.audit(e, "refused", d.Reason)
+		n.logf("refused %s from %s: %s", e.Kind, caller, d.Reason)
+		wc.Send(wire.Envelope{Corr: e.ID, From: n.cfg.Name, To: caller, Kind: wire.KindError, Body: d.Reason})
+		return
+	}
+	n.audit(e, "accepted", "")
+
 	n.appendInbox(e)
 	n.notifyWaiters(e)
 
@@ -519,6 +549,17 @@ func (n *Node) Ping(ctx context.Context, to string) (PingResult, error) {
 }
 
 // ---------- roster ----------
+
+// peerKey returns the server key the roster currently advertises for a peer,
+// which is what the policy store pins and compares against.
+func (n *Node) peerKey(name string) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.roster[name].ServerPub
+}
+
+// Policy exposes this node's peer decisions to the control socket.
+func (n *Node) Policy() *policy.Store { return n.policy }
 
 func (n *Node) peerAt(a netip.Addr) (string, bool) {
 	n.mu.Lock()

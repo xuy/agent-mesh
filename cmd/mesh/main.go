@@ -25,6 +25,11 @@ const usage = `mesh -- a named mesh for agents, over an encrypted peer-to-peer l
   mesh waiting                questions addressed to you, awaiting your answer
   mesh reply <id> <answer>    answer one of them
   mesh ping <peer>            is a peer reachable, and how
+  mesh id                     this node's fingerprint, to read out when joining
+  mesh trust                  what each peer is allowed to do here
+  mesh allow / deny <peer>    let a peer ask this node to work, or stop it
+  mesh block / unblock <peer> refuse a peer entirely
+  mesh log                    what peers have asked of you, refusals included
   mesh status                 this node
   mesh doctor                 what is wrong and what to run next
 
@@ -73,6 +78,14 @@ func main() {
 		err = cmdReply(args)
 	case "ping":
 		err = cmdPing(args)
+	case "id":
+		err = cmdID(args)
+	case "trust":
+		err = cmdTrust(args)
+	case "allow", "deny", "block", "unblock", "verify", "forget":
+		err = cmdTrustAction(cmd)(args)
+	case "log":
+		err = cmdLog(args)
 	case "status":
 		err = cmdStatus(args)
 	case "doctor":

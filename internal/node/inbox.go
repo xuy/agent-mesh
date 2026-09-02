@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/xuy/agent-mesh/internal/adapter"
 	"github.com/xuy/agent-mesh/internal/config"
@@ -85,6 +86,70 @@ func (n *Node) recent(qs []adapter.Question) []wire.Envelope {
 			ID: q.ID, From: q.From, To: n.cfg.Name,
 			Kind: wire.KindAsk, Thread: q.Thread, Body: q.Body,
 		})
+	}
+	return out
+}
+
+// auditEntry is one line of the record of what peers asked of this node.
+//
+// It is separate from the inbox because it answers a different question. The
+// inbox is what was said; the audit log is what was allowed, and it keeps
+// refused attempts, which never reach the inbox at all.
+type auditEntry struct {
+	TS      time.Time `json:"ts"`
+	From    string    `json:"from"`
+	Kind    string    `json:"kind"`
+	ID      string    `json:"id"`
+	Outcome string    `json:"outcome"`
+	Reason  string    `json:"reason,omitempty"`
+	Body    string    `json:"body,omitempty"`
+}
+
+func (n *Node) audit(e wire.Envelope, outcome, reason string) {
+	body := e.Body
+	if len(body) > 400 {
+		body = body[:400] + "..."
+	}
+	rec := auditEntry{
+		TS: time.Now().UTC(), From: e.From, Kind: string(e.Kind),
+		ID: e.ID, Outcome: outcome, Reason: reason, Body: body,
+	}
+	n.inboxMu.Lock()
+	defer n.inboxMu.Unlock()
+	path := config.AuditPath(n.cfg.Name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if b, err := json.Marshal(rec); err == nil {
+		f.Write(append(b, '\n'))
+	}
+}
+
+// Audit returns the last n entries of the record, oldest first.
+func (n *Node) Audit(limit int) []auditEntry {
+	n.inboxMu.Lock()
+	defer n.inboxMu.Unlock()
+	f, err := os.Open(config.AuditPath(n.cfg.Name))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []auditEntry
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		var e auditEntry
+		if json.Unmarshal(sc.Bytes(), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
 	}
 	return out
 }
