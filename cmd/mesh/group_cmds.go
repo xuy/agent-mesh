@@ -95,22 +95,54 @@ func expandGroup(nodeName, addr string, c *node.Ctl) ([]string, error) {
 	return g.Members(addr, online)
 }
 
-// fanOut asks every member of a group at once and prints each answer as it
-// arrives, labelled.
-//
-// Concurrently, because these are model calls: asking five agents in sequence
-// takes five times as long for no reason. Labelled, because an unattributed
-// wall of answers is worse than useless when they disagree.
-func fanOut(c *node.Ctl, peers []string, question, thread string, timeout time.Duration, asJSON bool) error {
-	type result struct {
-		Peer   string `json:"peer"`
-		Answer string `json:"answer,omitempty"`
-		Error  string `json:"error,omitempty"`
+// askAnywhere asks a peer or a whole group, so every client of the daemon gets
+// the same capability rather than group addressing being a CLI trick that an
+// agent reaching the mesh through MCP cannot use.
+func askAnywhere(c *node.Ctl, nodeName, addr, question, thread string, timeout time.Duration) (string, error) {
+	if !config.IsGroup(addr) {
+		r, err := c.Do(node.CtlReq{
+			Op: "ask", To: addr, Body: question, Thread: thread,
+			TimeoutSec: int(timeout.Seconds()),
+		}, nil)
+		if err != nil {
+			return "", err
+		}
+		return r.Body, nil
 	}
+	peers, err := expandGroup(nodeName, addr, c)
+	if err != nil {
+		return "", err
+	}
+	results := gather(c, peers, question, thread, timeout)
+	var b strings.Builder
+	failed := 0
+	for _, r := range results {
+		if r.Error != "" {
+			failed++
+			fmt.Fprintf(&b, "--- %s: could not answer\n%s\n\n", r.Peer, r.Error)
+			continue
+		}
+		fmt.Fprintf(&b, "--- %s\n%s\n\n", r.Peer, r.Answer)
+	}
+	if failed == len(results) {
+		return "", fmt.Errorf("none of the %d peer(s) answered:\n%s", len(results), b.String())
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// result is one member's answer to a group question.
+type result struct {
+	Peer   string `json:"peer"`
+	Answer string `json:"answer,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// gather asks every member at once. Concurrently, because these are model
+// calls: asking five agents in sequence takes five times as long for no reason.
+func gather(c *node.Ctl, peers []string, question, thread string, timeout time.Duration) []result {
 	results := make([]result, len(peers))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-
 	for i, p := range peers {
 		wg.Add(1)
 		go func(i int, p string) {
@@ -129,7 +161,17 @@ func fanOut(c *node.Ctl, peers []string, question, thread string, timeout time.D
 		}(i, p)
 	}
 	wg.Wait()
+	return results
+}
 
+// fanOut asks every member of a group at once and prints each answer as it
+// arrives, labelled.
+//
+// Concurrently, because these are model calls: asking five agents in sequence
+// takes five times as long for no reason. Labelled, because an unattributed
+// wall of answers is worse than useless when they disagree.
+func fanOut(c *node.Ctl, peers []string, question, thread string, timeout time.Duration, asJSON bool) error {
+	results := gather(c, peers, question, thread, timeout)
 	if asJSON {
 		return printJSON(results)
 	}

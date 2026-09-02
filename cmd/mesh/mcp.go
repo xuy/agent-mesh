@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/xuy/agent-mesh/internal/config"
 
 	"github.com/xuy/agent-mesh/internal/node"
 )
@@ -53,13 +56,13 @@ func mcpTools() []toolDef {
 	return []toolDef{
 		{"mesh_peers", "List the other agents on the mesh: their names, what software they run, and what each is for. Call this before asking anyone anything.", obj(map[string]any{})},
 		{"mesh_ask", "Ask another agent a question and wait for its answer. There is a model running on the other side, so this can take a while; raise timeout_seconds for real work. Pass the same thread across turns of one conversation so the peer keeps context.", obj(map[string]any{
-			"peer":            str("the peer's name, from mesh_peers"),
+			"peer":            str("the peer's name from mesh_peers, or @group to ask several at once (@all means everyone)"),
 			"question":        str("what to ask"),
 			"thread":          str("optional: groups this with earlier messages so the peer keeps context"),
 			"timeout_seconds": map[string]any{"type": "integer", "description": "how long to wait (default 300)"},
 		}, "peer", "question")},
 		{"mesh_send", "Tell another agent something without waiting for a reply.", obj(map[string]any{
-			"peer":    str("the peer's name"),
+			"peer":    str("the peer's name, or @group"),
 			"message": str("what to say"),
 		}, "peer", "message")},
 		{"mesh_waiting", "List questions other agents have asked YOU that are still waiting for an answer. Check this when you finish a task -- a peer may be blocked on you.", obj(map[string]any{})},
@@ -157,7 +160,6 @@ func mcpCall(nodeName, tool string, raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return err.Error(), true
 	}
-	_ = nm
 
 	jsonOr := func(v any, err error) (string, bool) {
 		if err != nil {
@@ -197,17 +199,29 @@ func mcpCall(nodeName, tool string, raw json.RawMessage) (string, bool) {
 		if a.Timeout <= 0 {
 			a.Timeout = 300
 		}
-		r, err := c.Do(node.CtlReq{Op: "ask", To: a.Peer, Body: a.Question, Thread: a.Thread, TimeoutSec: a.Timeout}, nil)
+		answer, err := askAnywhere(c, nm, a.Peer, a.Question, a.Thread,
+			time.Duration(a.Timeout)*time.Second)
 		if err != nil {
 			return err.Error(), true
 		}
-		return r.Body, false
+		return answer, false
 	case "mesh_send":
-		r, err := c.Do(node.CtlReq{Op: "tell", To: a.Peer, Body: a.Message, Thread: a.Thread, TimeoutSec: 60}, nil)
-		if err != nil {
-			return err.Error(), true
+		targets := []string{a.Peer}
+		if config.IsGroup(a.Peer) {
+			targets, err = expandGroup(nm, a.Peer, c)
+			if err != nil {
+				return err.Error(), true
+			}
 		}
-		return r.Body, false
+		var sent []string
+		for _, to := range targets {
+			r, err := c.Do(node.CtlReq{Op: "tell", To: to, Body: a.Message, Thread: a.Thread, TimeoutSec: 60}, nil)
+			if err != nil {
+				return err.Error(), true
+			}
+			sent = append(sent, r.Body)
+		}
+		return strings.Join(sent, "\n"), false
 	case "mesh_waiting":
 		r, err := c.Do(node.CtlReq{Op: "waiting"}, nil)
 		if err != nil {

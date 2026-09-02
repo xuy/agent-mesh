@@ -829,3 +829,16 @@ open for whoever turns up next.
 Two of the six failures were the test being wrong rather than the program,
 which is worth saying: a smoke test that has never been wrong has probably
 never been strict.
+
+### One capability set, whichever way a client reaches the mesh
+
+Group addressing was implemented in the CLI, which meant an agent reaching the
+mesh through MCP could not use it: the same daemon, the same mesh, a smaller
+product depending on how you knocked. That is the failure mode a project with
+several front doors falls into, and it is worth naming because it will happen
+again.
+
+The rule: **a capability belongs to the daemon or to a shared helper, never to
+one front door.** Group expansion and fan-out are now shared, so `mesh ask
+@builders` and a desktop agent calling `mesh_ask` with `@builders` do the same
+thing, including `@all`.
