@@ -220,6 +220,32 @@ coordinator killed by `SIGKILL` and nobody touching anything: **2s to restart,
   `mesh block`, and executing nodes starting closed), but giving the desktop
   surface *less* authority than the agent at the same machine is not built yet.
 
+## Why not X
+
+**SSH?** SSH gives you a shell on a machine you can already reach. This gives
+you an *agent* on a machine behind NAT — one that decides how to do the thing
+rather than executing what you typed, and that can come back with a question.
+
+**Tailscale?** This is built on Tailscale's data plane and owes it everything.
+The difference is the control plane: no account, no coordination server, no
+`tailscaled`, nothing to log into. If you already run Tailscale, you have a
+network; you still do not have agents that can find each other by name.
+
+**MCP?** MCP is how a model calls a service — synchronous, stateless, the
+caller knowing what to ask for. That is the right shape for Notion or Gmail and
+a thin one for handing work to an agent that runs for minutes and may need to
+ask you something first. agent-mesh speaks MCP so any harness can reach it, but
+the substrate underneath is messages between peers, not tool calls.
+
+**agent-talk / retalk?** Genuinely good, and ahead of this on breadth of agent
+integrations. It routes through a relay — end-to-end encrypted, but a service
+someone runs. Here there is no message-carrying server at all, and a peer can
+be any process rather than one of a supported list of coding agents.
+
+**A hosted "connect your machines" product?** Then your conversations go
+through someone else's servers and it works only for machines they support.
+That is the trade this exists to avoid.
+
 ## Design
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the honest version: what was built, what
